@@ -4498,36 +4498,78 @@ async function addProcessStep(phaseN){
   ph.steps.push({ id, title: title.trim(), role: '', days: 2 });
   saveAppState(); renderProcessEditorPanel();
 }
-// ---- The fixed set of "who might be in the room" options for a step's meeting — kept as
-// a short, stable list of roles/parties rather than a free-for-all so the summary chip stays
-// short and scannable, not a wall of names. ----
-const MEETING_ATTENDEE_OPTIONS = ['Architect','Designer','Client','Estimator','Subcontractor','Entire Team'];
+// ---- The "who might be in the room" options for a step's meeting — editable in Company
+// Settings so the list matches how John's team actually talks about attendees, but shared
+// across every step rather than per-step, so a rename or removal here updates everywhere
+// at once instead of needing to be fixed step by step. ----
+let MEETING_ATTENDEE_OPTIONS = ['Architect','Designer','Client','Estimator','Subcontractor','Entire Team'];
 function meetingAttendeesSummary(step){
   const list = step.meetingWith || [];
   if(!list.length) return 'Who\u2019s involved?';
   if(list.length <= 2) return list.join(', ');
   return list.slice(0,2).join(', ') + ' +' + (list.length - 2);
 }
-// ---- Deliberately a small popover-style overlay, not a giant form — this is the ONE thing
-// this control needs to do (pick a short list of parties), so it stays a single checkbox list
-// with a Done button instead of growing into a bigger modal. ----
+// ---- Deliberately a small popover-style overlay, not a giant form — checking who's in a
+// given step's meeting is the default view; "Edit options" flips the same small overlay into
+// a short add/rename/remove list for the shared option set, then flips back. ----
+let MEETING_PICKER_CONTEXT = null; // {phaseN, stepId} for whichever step's popover is open
+let MEETING_PICKER_EDIT_MODE = false;
 function openMeetingAttendeesPicker(phaseN, stepId){
   const ph = phaseDef(phaseN); if(!ph) return;
   const step = ph.steps.find(s => s.id === stepId); if(!step) return;
   if(!step.meetingWith) step.meetingWith = [];
-  openQuickOverlay(`
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-      <div class="panel-title" style="margin-bottom:0;">Who\u2019s in this meeting?</div>
-      <span style="cursor:pointer; color:var(--ink-faint); font-size:20px;" onclick="closeQuickOverlay(); renderProcessEditorPanel();">&times;</span>
-    </div>
-    <div class="hint" style="margin-bottom:12px;">"${escapeHtmlLite(step.title)}" — check everyone who typically needs to be in this meeting.</div>
-    ${MEETING_ATTENDEE_OPTIONS.map(name => `<label style="display:flex; align-items:center; gap:8px; padding:7px 0; cursor:pointer; font-size:13.5px;">
-      <input type="checkbox" ${step.meetingWith.includes(name)?'checked':''} onchange="toggleMeetingAttendee(${phaseN},'${stepId}','${name}',this.checked)"> ${name}
-    </label>`).join('')}
-    <div class="row" style="margin-top:16px; justify-content:flex-end;">
-      <button class="btn btn-dark" onclick="closeQuickOverlay(); renderProcessEditorPanel();">Done</button>
-    </div>
-  `, 360);
+  MEETING_PICKER_CONTEXT = { phaseN, stepId };
+  MEETING_PICKER_EDIT_MODE = false;
+  renderMeetingAttendeesPicker();
+}
+function renderMeetingAttendeesPicker(){
+  if(!MEETING_PICKER_CONTEXT) return;
+  const { phaseN, stepId } = MEETING_PICKER_CONTEXT;
+  const ph = phaseDef(phaseN); if(!ph) return;
+  const step = ph.steps.find(s => s.id === stepId); if(!step) return;
+  if(!step.meetingWith) step.meetingWith = [];
+  const closeAndRerender = "closeMeetingAttendeesPicker();";
+  if(MEETING_PICKER_EDIT_MODE){
+    openQuickOverlay(`
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <div class="panel-title" style="margin-bottom:0;">Edit Meeting Roles</div>
+        <span style="cursor:pointer; color:var(--ink-faint); font-size:20px;" onclick="${closeAndRerender}">&times;</span>
+      </div>
+      <div class="hint" style="margin-bottom:12px;">Shared across every step's meeting list — renaming or removing one here updates it everywhere it's already been picked.</div>
+      <div>${MEETING_ATTENDEE_OPTIONS.map((name, i) => `<div class="list-row" style="gap:8px;">
+        <input value="${escapeHtmlLite(name)}" style="flex:1;" onchange="renameMeetingAttendeeOption(${i}, this.value)">
+        <span style="cursor:pointer; color:var(--rust); font-size:16px; padding:0 4px;" onclick="removeMeetingAttendeeOption(${i})" title="Remove">&times;</span>
+      </div>`).join('')}</div>
+      <div class="row" style="margin-top:12px; gap:8px;">
+        <input type="text" id="newMeetingOptionInput" placeholder="e.g. Landscaper" onkeydown="if(event.key==='Enter') addMeetingAttendeeOption()">
+        <button class="btn btn-outline" onclick="addMeetingAttendeeOption()">+ Add</button>
+      </div>
+      <div class="row" style="margin-top:18px; justify-content:flex-end;">
+        <button class="btn btn-dark" onclick="MEETING_PICKER_EDIT_MODE=false; renderMeetingAttendeesPicker();">‹ Back to Checklist</button>
+      </div>
+    `, 380);
+  } else {
+    openQuickOverlay(`
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <div class="panel-title" style="margin-bottom:0;">Who\u2019s in this meeting?</div>
+        <span style="cursor:pointer; color:var(--ink-faint); font-size:20px;" onclick="${closeAndRerender}">&times;</span>
+      </div>
+      <div class="hint" style="margin-bottom:12px;">"${escapeHtmlLite(step.title)}" — check everyone who typically needs to be in this meeting.</div>
+      ${MEETING_ATTENDEE_OPTIONS.map(name => `<label style="display:flex; align-items:center; gap:8px; padding:7px 0; cursor:pointer; font-size:13.5px;">
+        <input type="checkbox" ${step.meetingWith.includes(name)?'checked':''} onchange="toggleMeetingAttendee(${phaseN},'${stepId}','${name}',this.checked)"> ${escapeHtmlLite(name)}
+      </label>`).join('')}
+      <div class="row" style="margin-top:14px; justify-content:space-between; align-items:center;">
+        <span style="cursor:pointer; font-size:12.5px; color:var(--ink-faint); text-decoration:underline;" onclick="MEETING_PICKER_EDIT_MODE=true; renderMeetingAttendeesPicker();">Edit options</span>
+        <button class="btn btn-dark" onclick="${closeAndRerender}">Done</button>
+      </div>
+    `, 360);
+  }
+}
+function closeMeetingAttendeesPicker(){
+  closeQuickOverlay();
+  MEETING_PICKER_CONTEXT = null;
+  MEETING_PICKER_EDIT_MODE = false;
+  renderProcessEditorPanel();
 }
 function toggleMeetingAttendee(phaseN, stepId, name, checked){
   const ph = phaseDef(phaseN); if(!ph) return;
@@ -4536,6 +4578,41 @@ function toggleMeetingAttendee(phaseN, stepId, name, checked){
   if(checked){ if(!step.meetingWith.includes(name)) step.meetingWith.push(name); }
   else { step.meetingWith = step.meetingWith.filter(n => n !== name); }
   saveAppState();
+}
+function addMeetingAttendeeOption(){
+  const input = document.getElementById('newMeetingOptionInput');
+  const name = input.value.trim();
+  if(!name) return;
+  if(MEETING_ATTENDEE_OPTIONS.includes(name)){ alert('That option already exists.'); return; }
+  MEETING_ATTENDEE_OPTIONS.push(name);
+  input.value = '';
+  saveAppState(); renderMeetingAttendeesPicker();
+}
+function renameMeetingAttendeeOption(index, newName){
+  const trimmed = newName.trim();
+  if(!trimmed){ renderMeetingAttendeesPicker(); return; }
+  const oldName = MEETING_ATTENDEE_OPTIONS[index];
+  if(oldName === trimmed) return;
+  MEETING_ATTENDEE_OPTIONS[index] = trimmed;
+  // Every step that already had the old name picked follows the rename, across every
+  // phase — otherwise renaming an option would silently orphan it on steps already set.
+  PROCESS_PHASES.forEach(ph => {
+    ph.steps.forEach(st => {
+      if(st.meetingWith){ st.meetingWith = st.meetingWith.map(n => n === oldName ? trimmed : n); }
+    });
+  });
+  saveAppState(); renderMeetingAttendeesPicker();
+}
+async function removeMeetingAttendeeOption(index){
+  const name = MEETING_ATTENDEE_OPTIONS[index];
+  if(!await customConfirm(`Remove "${name}" from the meeting roles list? It will also be removed from any step that already has it checked.`)) return;
+  MEETING_ATTENDEE_OPTIONS.splice(index, 1);
+  PROCESS_PHASES.forEach(ph => {
+    ph.steps.forEach(st => {
+      if(st.meetingWith){ st.meetingWith = st.meetingWith.filter(n => n !== name); }
+    });
+  });
+  saveAppState(); renderMeetingAttendeesPicker();
 }
 function renderRoleAssigneesPanel(){
   const host = document.getElementById('roleAssigneesPanel');
@@ -9000,6 +9077,7 @@ function buildAppSnapshot(){
     DEFAULT_TASK_ASSIGNEES, COMPANY_TEMPLATES, COMPANY_LOGO, COMPANY_LOGO_SIZE, CONTACTS,
     DRIP_CAMPAIGN_CONNECTION, PHASE_DESCRIPTIONS,
     PROCESS_PHASES, ROLE_DEFAULT_ASSIGNEE, PROJECT_FILE_CATEGORIES, PLAN_DRAWING_CATEGORIES,
+    MEETING_ATTENDEE_OPTIONS,
     themeVars: captureThemeVars(),
   };
 }
@@ -9026,6 +9104,7 @@ function applyAppSnapshot(snap){
   if(snap.ROLE_DEFAULT_ASSIGNEE) ROLE_DEFAULT_ASSIGNEE = snap.ROLE_DEFAULT_ASSIGNEE;
   if(snap.PROJECT_FILE_CATEGORIES) PROJECT_FILE_CATEGORIES = snap.PROJECT_FILE_CATEGORIES;
   if(snap.PLAN_DRAWING_CATEGORIES) PLAN_DRAWING_CATEGORIES = snap.PLAN_DRAWING_CATEGORIES;
+  if(snap.MEETING_ATTENDEE_OPTIONS) MEETING_ATTENDEE_OPTIONS = snap.MEETING_ATTENDEE_OPTIONS;
   if(snap.themeVars) applyThemeVars(snap.themeVars);
 }
 // ---- Local persistence sets — a project id lands in these only via an explicit delete
