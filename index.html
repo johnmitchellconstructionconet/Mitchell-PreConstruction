@@ -1859,10 +1859,7 @@ function defaultEstimateFor(opp){
     feePct: '', archHours: '', otherHours: '', budget: '', deliverables: '', feePayable: '',
     email: '',
     activities: [],
-    tasks: [
-      {id:'t1', title:'Send welcome email', assignee: opp.owner || 'Unassigned', due: null, done: true},
-      {id:'t2', title: opp.nextActivityTask || 'Follow up', assignee: opp.owner || 'Unassigned', due: opp.nextActivityDate, done: false}
-    ],
+    tasks: [],
     doc: { status: 'Draft', sentAt: null, viewedAt: null, signedAt: null, signedName: '', signatureDataUrl: '', signMethod: '' },
     meetingNotes: [],       // [{id, type, date, note}] — project/deal-specific; the person's own profile lives in CONTACTS instead
     attachments: [],        // [{id, name, dataUrl, uploadedAt}] — general PDF/photo uploads, separate from the 4 auto-tracked documents
