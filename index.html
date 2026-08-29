@@ -841,6 +841,8 @@ select{cursor:pointer;}
 .hero-revision-banner-title{font-size:12px; font-weight:700; color:#7a5ea8; letter-spacing:.02em;}
 .hero-revision-banner-note{font-size:13px; color:var(--ink); margin-top:5px; font-style:italic;}
 .hero-revision-banner-meta{font-size:11.5px; color:#8a72ad; margin-top:5px;}
+.hero-meeting-banner{display:flex; align-items:center; gap:8px; background:#FBF3E1; border:1px solid #e8d4a4; border-radius:9px; padding:9px 14px; margin-top:10px; font-size:13px; font-weight:700; color:#8a6d1f;}
+.hero-meeting-banner .emoji{font-size:15px;}
 .hero-done{border-color:var(--jade); background:#F8FAF8;}
 .hero-label{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:8px;}
 .hero-title{font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:600; line-height:1.3;}
@@ -5862,7 +5864,7 @@ function buildHeroInnerHTML(p){
     <div class="hero-label">Phase ${ph.n} · ${escapeHtmlLite(ph.name)} — Step ${index+1} of ${total}${dueBadge}${isInProgress ? `<span class="duebadge duebadge-progress">In Progress</span>` : ''}</div>
     <div class="hero-title">${escapeHtmlLite(def.title)}</div>
     <div class="hero-meta">${escapeHtmlLite(def.role)}${isBlocked && a.blockerNote ? ` — Blocked: ${escapeHtmlLite(a.blockerNote)}${a.blockedParty ? ` · ${escapeHtmlLite(a.blockedParty)}` : ''}` : ''}</div>
-    ${def.needsMeeting ? `<div class="hero-meta" style="margin-top:2px;">📅 Meeting needed — ${escapeHtmlLite((def.meetingWith && def.meetingWith.length) ? def.meetingWith.join(', ') : 'attendees not yet set')}</div>` : ''}
+    ${def.needsMeeting ? `<div class="hero-meeting-banner"><span class="emoji">📅</span> Meeting needed — ${escapeHtmlLite((def.meetingWith && def.meetingWith.length) ? def.meetingWith.join(', ') : 'attendees not yet set')}</div>` : ''}
     <div class="hero-row">
       <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></div>
       ${a.baselineDue ? `<div><label>Baseline Was</label><div style="font-size:13px; color:var(--ink-faint); padding-top:8px;">${fmtNoteDate(a.baselineDue)}</div></div>` : ''}
