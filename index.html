@@ -9106,6 +9106,11 @@ function applyThemeVars(vars){
   if(!vars) return;
   Object.keys(vars).forEach(k => document.documentElement.style.setProperty(k, vars[k]));
 }
+// ---- Set true the first time migrateLegacyPhaseNumbering() runs, and persisted from then
+// on — so this only ever fires once for data saved before Preconstruction phases were
+// renumbered to start at 1, and never mistakes a later, intentional phase deletion (which
+// can legitimately leave the lowest phase number above 1) for the old numbering. ----
+let PHASE_NUMBERING_MIGRATED = false;
 function buildAppSnapshot(){
   return {
     OPPORTUNITIES, OPP_ESTIMATES, PROJECTS, RELATIONSHIP_PARTNERS,
@@ -9113,7 +9118,7 @@ function buildAppSnapshot(){
     DEFAULT_TASK_ASSIGNEES, COMPANY_TEMPLATES, COMPANY_LOGO, COMPANY_LOGO_SIZE, CONTACTS,
     DRIP_CAMPAIGN_CONNECTION, PHASE_DESCRIPTIONS,
     PROCESS_PHASES, ROLE_DEFAULT_ASSIGNEE, PROJECT_FILE_CATEGORIES, PLAN_DRAWING_CATEGORIES,
-    MEETING_ATTENDEE_OPTIONS,
+    MEETING_ATTENDEE_OPTIONS, PHASE_NUMBERING_MIGRATED, WORKFLOW_PHASE_DEFS,
     themeVars: captureThemeVars(),
   };
 }
@@ -9141,7 +9146,43 @@ function applyAppSnapshot(snap){
   if(snap.PROJECT_FILE_CATEGORIES) PROJECT_FILE_CATEGORIES = snap.PROJECT_FILE_CATEGORIES;
   if(snap.PLAN_DRAWING_CATEGORIES) PLAN_DRAWING_CATEGORIES = snap.PLAN_DRAWING_CATEGORIES;
   if(snap.MEETING_ATTENDEE_OPTIONS) MEETING_ATTENDEE_OPTIONS = snap.MEETING_ATTENDEE_OPTIONS;
+  if(snap.PHASE_NUMBERING_MIGRATED) PHASE_NUMBERING_MIGRATED = snap.PHASE_NUMBERING_MIGRATED;
+  if(Array.isArray(snap.WORKFLOW_PHASE_DEFS)){ WORKFLOW_PHASE_DEFS.length = 0; WORKFLOW_PHASE_DEFS.push(...snap.WORKFLOW_PHASE_DEFS); }
   if(snap.themeVars) applyThemeVars(snap.themeVars);
+  migrateLegacyPhaseNumbering();
+}
+// ---- Data saved before Preconstruction phases were renumbered to start at 1 still has
+// "Design Discovery" at Phase 3 baked in — not just in the process template, but frozen into
+// every already-saved project's currentPhase, legacy phase tracker, baseline schedule, and
+// new-engine workflow state. Detects that specific old default (Phase 3 named "Design
+// Discovery", with no Phase 1) and shifts every one of those numbers down by the same amount,
+// once, so old data lines up with the new numbering instead of showing "Phase 3" forever. ----
+function migrateLegacyPhaseNumbering(){
+  if(PHASE_NUMBERING_MIGRATED) return;
+  const legacyStart = PROCESS_PHASES.find(ph => ph.n === 3 && ph.name === 'Design Discovery');
+  const hasPhaseOne = PROCESS_PHASES.some(ph => ph.n === 1);
+  if(!legacyStart || hasPhaseOne){ PHASE_NUMBERING_MIGRATED = true; return; } // already on the new numbering, or a custom setup — nothing to migrate
+  const shift = 2;
+  PROCESS_PHASES.forEach(ph => { ph.n -= shift; });
+  // WORKFLOW_PHASE_DEFS was never persisted under the old numbering (it's only saved going
+  // forward, alongside this fix), so whatever's in memory here is already correct at 1-6 —
+  // shifting it too would double-shift a legacy load and corrupt it.
+  Object.keys(PHASE_DESCRIPTIONS || {}).forEach(key => {
+    const val = PHASE_DESCRIPTIONS[key];
+    delete PHASE_DESCRIPTIONS[key];
+    PHASE_DESCRIPTIONS[Number(key) - shift] = val;
+  });
+  Object.values(PROJECTS).forEach(p => {
+    if(typeof p.currentPhase === 'number') p.currentPhase -= shift;
+    if(Array.isArray(p.phases)) p.phases.forEach(ph => { ph.n -= shift; });
+    if(Array.isArray(p.baselineSchedule)) p.baselineSchedule.forEach(ph => { ph.n -= shift; });
+    if(p.workflow){
+      if(typeof p.workflow.currentStageN === 'number') p.workflow.currentStageN -= shift;
+      if(Array.isArray(p.workflow.stages)) p.workflow.stages.forEach(st => { st.n -= shift; });
+    }
+  });
+  PHASE_NUMBERING_MIGRATED = true;
+  saveAppState(); // persist the migrated numbering right away so this never runs twice
 }
 // ---- Local persistence sets — a project id lands in these only via an explicit delete
 // click. Kept as plain in-memory tracking (used by the delete flows elsewhere in the app);
