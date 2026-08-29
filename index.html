@@ -1260,7 +1260,7 @@ const TEMPLATE_META = {
   preconAgreement: {label:'Preconstruction Agreement', hint:'Attaches to an opportunity\'s Files once its proposal is signed.'},
   preliminaryEstimate: {label:'Preliminary Estimate', hint:'Attaches once a real estimate exists for that opportunity.'},
   formalProposal: {label:'Formal Proposal', hint:'Attaches once the proposal has been sent — also shows on the Preconstruction project\'s Proposals & Contracts tab.'},
-  constructionAgreement: {label:'Construction Agreement', hint:'Attaches once a project reaches Phase 8 — Contract & Handoff.'}
+  constructionAgreement: {label:'Construction Agreement', hint:'Attaches once a project reaches Phase 6 — Contract & Handoff.'}
 };
 function renderScheduleTemplatePanel(){
   const panel = document.getElementById('scheduleTemplatePanel');
@@ -3392,7 +3392,7 @@ function setProjectGoVisuallyLink(projectId, url){
 }
 function buildFilesPanelHTML(opp, e){
   const linkedProject = Object.values(PROJECTS).find(pr => pr.convertedFrom === opp.id || pr.id === opp.id);
-  const constructionAgreementDone = !!(COMPANY_TEMPLATES.constructionAgreement && linkedProject && linkedProject.currentPhase === 8);
+  const constructionAgreementDone = !!(COMPANY_TEMPLATES.constructionAgreement && linkedProject && linkedProject.currentPhase === 6);
   if(!e.uploadedDocs) e.uploadedDocs = {};
   const uploadSlots = [
     ['preconstructionAgreement', 'Preconstruction Agreement'],
@@ -4328,10 +4328,9 @@ const SALES_STAGE_COLORS = {
   'Preconstruction Agreement Sent': '#5C7A63',
 };
 
-/* ---- Preconstruction Projects: 8-phase workflow engine ---- */
-/* Phases 1-2 (Lead & Qualification, Site Consultation & Prelim Budget) happen in Sales,
-   before conversion. A Project's roadmap starts at Phase 3 — this is the START OF
-   PRECONSTRUCTION marker from Section 5. */
+/* ---- Preconstruction Projects: 6-phase workflow engine ---- */
+/* Sales Pipeline (the old Lead & Qualification / Site Consultation phases) was removed —
+   this build is Preconstruction-only, so a Project's roadmap now starts at Phase 1. */
 // Standard Schedule Template — the "typical" number of business days each phase usually
 // takes, managed once in Company Settings. This is what auto-generates a real baseline
 // schedule instead of requiring every milestone's date to be typed in by hand.
@@ -4424,10 +4423,12 @@ function setDefaultTaskAssignee(name, assignee){
   if(projectPage && projectPage.classList.contains('active')) renderProjectDetail();
 }
 // ---- Manage Process — this is the actual editor for PROCESS_PHASES/PROCESS_ROLES, called
-// from Company Settings. Phase add/delete isn't offered here on purpose: phase numbers are
-// referenced directly by p.currentPhase, the dashboard, and the legacy phase tracker, so
-// restructuring the phases themselves is a bigger change than this editor is meant for —
-// but every step within a phase (title, role, order, add, remove) is fully editable. ----
+// from Company Settings. Every phase (add, delete, rename) and every step within a phase
+// (title, role, order, add, remove) is fully editable. Deleting/adding a phase here keeps
+// WORKFLOW_PHASE_DEFS in sync (the legacy phase tracker, dashboard, and Company Settings
+// panels all read phase names from that list separately), and phase numbers only need to
+// stay in increasing order — the engine finds "the next phase" as whichever one has a
+// higher number, not strictly n+1, so gaps left by a deleted phase are harmless. ----
 function renderProcessEditorPanel(){
   const host = document.getElementById('processEditorPanel');
   if(!host) return;
@@ -4438,6 +4439,7 @@ function renderProcessEditorPanel(){
         <div style="font-weight:700; font-size:12.5px; color:var(--taupe-dark); text-transform:uppercase; letter-spacing:.03em;">Phase ${ph.n} ·</div>
         <input value="${escapeHtmlLite(ph.name)}" style="max-width:280px; font-weight:600;" onchange="setProcessPhaseName(${ph.n}, this.value)">
         <span class="pill pill-slate" style="margin-left:auto; font-size:10px;">${totalDays} typical business days total</span>
+        <span style="cursor:pointer; color:var(--rust); font-size:15px; padding:0 4px;" onclick="removeProcessPhase(${ph.n})" title="Delete this entire phase">&times;</span>
       </div>
       ${ph.steps.map((step, i) => `
         <div class="list-row" style="gap:8px; align-items:center; flex-wrap:wrap;">
@@ -4463,6 +4465,7 @@ function renderProcessEditorPanel(){
         </div>`).join('')}
       <button class="btn btn-outline btn-sm" style="margin-top:6px;" onclick="addProcessStep(${ph.n})">+ Add Step to Phase ${ph.n}</button>
     `; }).join('')}
+    <button class="btn btn-outline" style="margin-top:22px;" onclick="addProcessPhase()">+ Add Phase</button>
   </div>`;
 }
 function setProcessPhaseName(phaseN, value){
@@ -4498,6 +4501,32 @@ async function addProcessStep(phaseN){
   if(!title || !title.trim()) return;
   const id = 'p' + phaseN + 's_' + Date.now();
   ph.steps.push({ id, title: title.trim(), role: '', days: 2 });
+  saveAppState(); renderProcessEditorPanel();
+}
+// ---- A small cycling palette so a newly-added phase always gets a real color instead of
+// leaving PRECON_PHASE_COLORS[n] undefined (which would silently render as invalid CSS on
+// the dashboard cards and table rows). ----
+const PRECON_PHASE_COLOR_PALETTE = ['#63707A','#6A6455','#4A453A','#A69064','#8C7852','#5C7A63','#7A6A8C','#5C8A7A','#8C6A5C','#6A7A8C'];
+async function addProcessPhase(){
+  const name = await customPrompt('New phase name:');
+  if(!name || !name.trim()) return;
+  const trimmed = name.trim();
+  const nextN = PROCESS_PHASES.length ? Math.max(...PROCESS_PHASES.map(ph => ph.n)) + 1 : 1;
+  PROCESS_PHASES.push({ n: nextN, name: trimmed, steps: [] });
+  // WORKFLOW_PHASE_DEFS (the legacy phase tracker / dashboard / Company Settings panels)
+  // has to mirror PROCESS_PHASES exactly, or a new phase would show up in the process
+  // editor but be invisible everywhere else that reads phase names from the legacy list.
+  WORKFLOW_PHASE_DEFS.push({ n: nextN, name: trimmed, milestoneNames: [] });
+  if(!PRECON_PHASE_COLORS[nextN]) PRECON_PHASE_COLORS[nextN] = PRECON_PHASE_COLOR_PALETTE[(nextN - 1) % PRECON_PHASE_COLOR_PALETTE.length];
+  saveAppState(); renderProcessEditorPanel();
+}
+async function removeProcessPhase(phaseN){
+  if(PROCESS_PHASES.length <= 1){ alert('At least one phase has to stay — this is the only one left.'); return; }
+  const ph = phaseDef(phaseN); if(!ph) return;
+  if(!await customConfirm(`Delete Phase ${ph.n} · "${ph.name}" and all ${ph.steps.length} of its steps? Any project currently sitting on this phase will need to be moved manually afterward. This can't be undone.`)) return;
+  PROCESS_PHASES = PROCESS_PHASES.filter(p => p.n !== phaseN);
+  const legacyIdx = WORKFLOW_PHASE_DEFS.findIndex(pd => pd.n === phaseN);
+  if(legacyIdx !== -1) WORKFLOW_PHASE_DEFS.splice(legacyIdx, 1);
   saveAppState(); renderProcessEditorPanel();
 }
 // ---- The "who might be in the room" options for a step's meeting — editable in Company
@@ -4655,22 +4684,22 @@ function setPhaseDescription(phaseNum, value){
   saveAppState();
 }
 const WORKFLOW_PHASE_DEFS = [
-  {n:3, name:'Design Discovery', milestoneNames:[
+  {n:1, name:'Design Discovery', milestoneNames:[
     'Design Discovery Form Sent','Discovery Form & Creative Brief Completed',
     'Internal Review of Discovery & Brief','Design Discovery / Client Review Meeting']},
-  {n:4, name:'Architectural Development', milestoneNames:[
+  {n:2, name:'Architectural Development', milestoneNames:[
     'Architectural Development Started','First-Round Rough Draft of Plans',
     'Internal Plan Review','First-Round Client Plan Review','Selection Takeoffs & Identification']},
-  {n:5, name:'Design Direction & Selections', milestoneNames:[
+  {n:3, name:'Design Direction & Selections', milestoneNames:[
     'Design Direction & Intent Meeting','Design Direction Established',
     'Major Product Selections In Progress','Major Selections Complete']},
-  {n:6, name:'3D Rendering & Refinement', milestoneNames:[
+  {n:4, name:'3D Rendering & Refinement', milestoneNames:[
     'Begin 3D Renderings','Internal Rendering Review','Client Rendering Review',
     'Final Architectural Plan Details','Final Internal Review','Final Client Review']},
-  {n:7, name:'Trade Pricing & Final Budget', milestoneNames:[
+  {n:5, name:'Trade Pricing & Final Budget', milestoneNames:[
     'Trade / Subcontractor Pricing','Formal Project Budget Created',
     'Internal Review of Formal Proposal','Formal Proposal Presented to Client']},
-  {n:8, name:'Contract & Handoff', milestoneNames:[
+  {n:6, name:'Contract & Handoff', milestoneNames:[
     'Construction Agreement Sent','Construction Contract Signed',
     'Final Scheduling Phase','Project Handoff / Production Setup']},
 ];
@@ -4683,7 +4712,7 @@ const WORKFLOW_PHASE_DEFS = [
 // Steps are STRICTLY SEQUENTIAL within a phase — step N can't go Ready until step N-1 is
 // Complete or N/A. That's a deliberate change from an earlier draft that modeled parallel
 // workstreams: John's real process is a strict numbered sequence, so the dependency model
-// should say so, not invent parallelism that isn't there. Phase numbers (3–8) intentionally
+// should say so, not invent parallelism that isn't there. Phase numbers (1–6) intentionally
 // match p.currentPhase elsewhere in the app (dashboard, legacy phase tracker) so a project's
 // position here is exact, not a guess. ----
 const PROCESS_ROLES = ['Estimator', 'P/C Coordinator', 'S/C', 'Designer', 'Owner'];
@@ -4691,32 +4720,32 @@ const PROCESS_ROLES = ['Estimator', 'P/C Coordinator', 'S/C', 'Designer', 'Owner
 // guessing who actually fills "Estimator" day to day would be fabricating an assignment.
 let ROLE_DEFAULT_ASSIGNEE = {};
 let PROCESS_PHASES = [
-  { n:3, name:'Design Discovery', steps:[
+  { n:1, name:'Design Discovery', steps:[
     { id:'p3s1', title:'Design Discovery Form sent to client', role:'Estimator', days:3 },
     { id:'p3s2', title:'Internal Discovery Review', role:'Estimator', days:3 },
     { id:'p3s3', title:'Design Discovery / Client Review Meeting', role:'Estimator', days:4 },
   ]},
-  { n:4, name:'Architectural Development', steps:[
+  { n:2, name:'Architectural Development', steps:[
     { id:'p4s1', title:'Start of architectural plans', role:'Estimator & S/C', days:6 },
     { id:'p4s2', title:'Review plan revisions through GoVisually', role:'Estimator', days:4 },
     { id:'p4s3', title:'Plans get approved — Client Plan Review', role:'Estimator', days:3 },
     { id:'p4s4', title:'Selections Identification Meeting', role:'Estimator & S/C', days:2 },
   ]},
-  { n:5, name:'Design Direction & Selections', steps:[
+  { n:3, name:'Design Direction & Selections', steps:[
     { id:'p5s1', title:'Selections Meeting', role:'Estimator & S/C', days:3 },
     { id:'p5s2', title:'Create Clarifications Sheet', role:'Estimator', days:2 },
     { id:'p5s3', title:'Write RFP using selections sheet', role:'Estimator', days:3 },
     { id:'p5s4', title:'Plans takeoffs to match the RFP', role:'Estimator', days:2 },
     { id:'p5s5', title:'Review RFP for scope gaps & grammar', role:'Estimator & S/C', days:2 },
   ]},
-  { n:6, name:'3D Rendering & Refinement', steps:[
+  { n:4, name:'3D Rendering & Refinement', steps:[
     { id:'p6s1', title:'3D Renderings', role:'Designer', days:6 },
     { id:'p6s2', title:'Internal Rendering Review', role:'Estimator', days:2 },
     { id:'p6s3', title:'Client Rendering Review', role:'Estimator', days:3 },
     { id:'p6s4', title:'Final Architectural Details', role:'Estimator', days:2 },
     { id:'p6s5', title:'Final Design Review', role:'Estimator', days:2 },
   ]},
-  { n:7, name:'Trade Pricing & Final Budget', steps:[
+  { n:5, name:'Trade Pricing & Final Budget', steps:[
     { id:'p7s1', title:'Create bid packages', role:'Estimator', days:3 },
     { id:'p7s2', title:'Fill out Bid List of vendors & subs', role:'Estimator', days:2 },
     { id:'p7s3', title:'Assign bidders to BuilderTrend bid packages', role:'P/C Coordinator', days:1 },
@@ -4733,7 +4762,7 @@ let PROCESS_PHASES = [
     { id:'p7s14', title:'Review Formal Proposal for accuracy & scope gaps', role:'Estimator', days:2 },
     { id:'p7s15', title:'Finalize Formal Proposal & present to client', role:'Estimator', days:2 },
   ]},
-  { n:8, name:'Contract & Handoff', steps:[
+  { n:6, name:'Contract & Handoff', steps:[
     { id:'p8s1', title:'Formal Proposal approved — submit Canvas Plan to CAD', role:'P/C Coordinator', days:2 },
     { id:'p8s2', title:'Draft Final Scope of Work (FSOW)', role:'P/C Coordinator', days:3 },
     { id:'p8s3', title:'Review FSOW & finalize', role:'Estimator', days:2 },
@@ -4978,7 +5007,10 @@ function computeScheduleHealth(p){
   const forecastReady = lastStage.forecastFinish;
   const baselineReady = lastStage.baselineFinish;
   const varianceDays = (forecastReady && baselineReady) ? Math.round((new Date(forecastReady+'T00:00:00') - new Date(baselineReady+'T00:00:00')) / 86400000) : 0;
-  return { forecastReady, baselineReady, varianceDays, lastSlip: wf.lastSlip };
+  const startDate = wf.baselineStartDate || null;
+  const totalBaselineDays = (startDate && baselineReady) ? Math.round((new Date(baselineReady+'T00:00:00') - new Date(startDate+'T00:00:00')) / 86400000) : null;
+  const totalForecastDays = (startDate && forecastReady) ? Math.round((new Date(forecastReady+'T00:00:00') - new Date(startDate+'T00:00:00')) / 86400000) : null;
+  return { forecastReady, baselineReady, varianceDays, lastSlip: wf.lastSlip, startDate, totalBaselineDays, totalForecastDays };
 }
 // The one thing to work on right now: the earliest step in the current phase that's Ready,
 // In Progress, or Blocked. "Waiting" steps are excluded on purpose — there's nothing WE can
@@ -5378,7 +5410,7 @@ function buildManualScheduleBuilderHTML(p){
     return `<div class="section-label-row" style="margin-top:16px;"><div class="eyebrow">Phase ${ph.n} · ${escapeHtmlLite(ph.name)}</div></div>
       <table><thead><tr><th>#</th><th>Step</th><th>Role</th><th>Owner</th><th>Days</th><th>Computed Due</th></tr></thead><tbody>${stepRows}</tbody></table>`;
   }).join('');
-  return `<div id="manualScheduleBuilder" class="section-label-row" style="margin-top:20px; cursor:pointer;" onclick="toggleManualScheduleBuilder()"><div class="eyebrow">${MANUAL_SCHEDULE_OPEN ? '▾' : '▸'} Build the Schedule Manually — Every Step, Phase 3 through 8</div></div>
+  return `<div id="manualScheduleBuilder" class="section-label-row" style="margin-top:20px; cursor:pointer;" onclick="toggleManualScheduleBuilder()"><div class="eyebrow">${MANUAL_SCHEDULE_OPEN ? '▾' : '▸'} Build the Schedule Manually — Every Step, Phase 1 through 6</div></div>
     ${MANUAL_SCHEDULE_OPEN ? `<div class="panel" style="margin-bottom:16px;"><div class="panel-body" style="padding:16px 20px;">
       <div class="hint" style="margin-bottom:10px;">Each step's day-count starts from Company Settings' typical duration — adjust any of them just for this project without changing the global default. Dates are computed automatically in business days from the start date below; nothing to type calendar dates by hand.</div>
       <label class="est-lbl">Start Date</label>
@@ -5416,7 +5448,7 @@ function startPreconstruction(opportunityId){
   const projectId = opportunityId + '_project';
   PROJECTS[projectId] = {
     id: projectId, name: opp.name, client: est.clientName || opp.name, location: est.propertyAddress || 'Springfield',
-    projectType: opp.projectType, owner: 'John', estimator: est.estimator || 'Unassigned', currentPhase: 3,
+    projectType: opp.projectType, owner: 'John', estimator: est.estimator || 'Unassigned', currentPhase: 1,
     preconStartDate: new Date().toISOString().slice(0,10), phaseEnteredDate: new Date().toISOString().slice(0,10),
     nextAction: {title:'Send Design Discovery Form', assigned: est.preconCoordinator || 'Unassigned', due:'TBD', blocking:'None — ready to start'},
     phases: buildFreshPhases(),
@@ -5469,7 +5501,7 @@ function daysInEntirePipeline(project){
 // bar — this only gets more accurate as real due dates are entered, never less honest.
 function computePhaseSchedule(project){
   // "Actual" schedule — live, computed from real data. The phase's end date is specifically
-  // the LAST milestone's date, in the order those milestones are defined (e.g. for Phase 3,
+  // the LAST milestone's date, in the order those milestones are defined (e.g. for Phase 1,
   // that's "Design Discovery / Client Review Meeting") — not just whichever milestone happens
   // to have the latest date. The start is the FIRST milestone's date, same logic. For a
   // completed milestone this uses when it genuinely finished (completedDate); for anything
@@ -5745,6 +5777,8 @@ function buildScheduleHealthStripHTML(p){
       <div class="schedhealth-metric"><label>Target Construction Start</label><input type="date" value="${p.targetConstructionStart||''}" onchange="setProjectField('${p.id}','targetConstructionStart',this.value); renderProjectDetail();"></div>
       <div class="schedhealth-metric"><label>Baseline Ready</label><div class="schedhealth-val">${health.baselineReady ? fmtNoteDate(health.baselineReady) : '—'}</div></div>
       <div class="schedhealth-metric"><label>Forecast Ready</label><div class="schedhealth-val">${health.forecastReady ? fmtNoteDate(health.forecastReady) : '—'}</div></div>
+      <div class="schedhealth-metric" title="Total business days in preconstruction, from the baseline start date to the baseline Ready date"><label>Total Baseline Days</label><div class="schedhealth-val">${health.totalBaselineDays !== null ? health.totalBaselineDays + ' days' : '—'}</div></div>
+      <div class="schedhealth-metric" title="Total business days in preconstruction, from the baseline start date to the current Forecast Ready date"><label>Total Forecast Days</label><div class="schedhealth-val">${health.totalForecastDays !== null ? health.totalForecastDays + ' days' : '—'}</div></div>
       <div class="schedhealth-metric"><label>Variance</label><div class="schedhealth-val schedhealth-variance">${varianceLabel}</div></div>
       <button class="btn btn-outline btn-sm" onclick="extendCurrentPhase('${p.id}')">Extend Current Phase</button>
       <button class="btn btn-outline btn-sm" style="margin-left:auto; flex-shrink:0;" onclick="promptGenerateProcessBaseline('${p.id}')">Reset Baseline</button>
@@ -5944,7 +5978,7 @@ function buildWaitingBlockedSummaryHTML(p){
 // ---- Progressive disclosure, level 3: every step in this phase, collapsed by default. ----
 // ---- Recomputes every step's due date in a phase purely from day-counts (this step's
 // override if set, otherwise Company Settings' default), anchored off the previous phase's
-// finish (or the project's baseline start, for Phase 3). Mirrors the Manual Schedule
+// finish (or the project's baseline start, for Phase 1). Mirrors the Manual Schedule
 // Builder's logic so both places work the same way — days in, dates out, never the other
 // way around. ----
 function recalcPhaseDuesFromDays(p, phaseN){
@@ -7254,7 +7288,7 @@ function buildPreconProjectCard(p){
     ${next ? `<div class="sl-meta" style="margin-top:6px; font-style:italic;">Next: ${escapeHtmlLite(next.def.title)}</div>` : ''}
   </div>`;
 }
-const PRECON_PHASE_COLORS = {3:'#63707A', 4:'#6A6455', 5:'#4A453A', 6:'#A69064', 7:'#8C7852', 8:'#5C7A63'};
+const PRECON_PHASE_COLORS = {1:'#63707A', 2:'#6A6455', 3:'#4A453A', 4:'#A69064', 5:'#8C7852', 6:'#5C7A63'};
 function setPreconView(view, btn){
   document.querySelectorAll('#page-precon-dash .view-toggle button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -7812,10 +7846,10 @@ function buildActionBannerHTML(p){
       <div class="section-label-row"><div class="eyebrow">Construction Agreement</div></div>
       <div class="panel"><div class="panel-body" style="padding:18px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
         <div>
-          <div style="font-weight:600;">${constructionAgreementDoc ? escapeHtmlLite(constructionAgreementDoc.name) : template && p.currentPhase === 8 ? 'Ready — company template attached' : 'No agreement uploaded yet'}</div>
-          <div class="sub-txt" style="margin-top:2px;">${constructionAgreementDoc ? 'Uploaded ' + constructionAgreementDoc.uploadedAt : template ? 'Company template attaches once this project reaches Phase 8 — or upload your own below.' : 'Upload the signed agreement once it\'s ready.'}</div>
+          <div style="font-weight:600;">${constructionAgreementDoc ? escapeHtmlLite(constructionAgreementDoc.name) : template && p.currentPhase === 6 ? 'Ready — company template attached' : 'No agreement uploaded yet'}</div>
+          <div class="sub-txt" style="margin-top:2px;">${constructionAgreementDoc ? 'Uploaded ' + constructionAgreementDoc.uploadedAt : template ? 'Company template attaches once this project reaches Phase 6 — or upload your own below.' : 'Upload the signed agreement once it\'s ready.'}</div>
         </div>
-        ${constructionAgreementDoc ? `<div class="row" style="gap:8px;"><button class="btn btn-outline" onclick="openFilePreview('${constructionAgreementDoc.dataUrl}', '${escapeHtmlLite(constructionAgreementDoc.name || 'Construction Agreement')}')">View →</button><label class="pill pill-slate" style="cursor:pointer;">Replace<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="uploadDocToSlot('${srcOppId3}','constructionAgreement', this)"></label></div>` : template && p.currentPhase === 8 ? `<button class="btn btn-dark" onclick="downloadTemplate('constructionAgreement')">Download →</button>` : `<label class="pill pill-slate" style="cursor:pointer;">+ Upload<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="uploadDocToSlot('${srcOppId3}','constructionAgreement', this)"></label>`}
+        ${constructionAgreementDoc ? `<div class="row" style="gap:8px;"><button class="btn btn-outline" onclick="openFilePreview('${constructionAgreementDoc.dataUrl}', '${escapeHtmlLite(constructionAgreementDoc.name || 'Construction Agreement')}')">View →</button><label class="pill pill-slate" style="cursor:pointer;">Replace<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="uploadDocToSlot('${srcOppId3}','constructionAgreement', this)"></label></div>` : template && p.currentPhase === 6 ? `<button class="btn btn-dark" onclick="downloadTemplate('constructionAgreement')">Download →</button>` : `<label class="pill pill-slate" style="cursor:pointer;">+ Upload<input type="file" accept="application/pdf,image/*" style="display:none;" onchange="uploadDocToSlot('${srcOppId3}','constructionAgreement', this)"></label>`}
       </div></div>
       <div class="section-label-row"><div class="eyebrow">Documents</div><span class="pill pill-slate" style="cursor:pointer;" onclick="openUploadDocumentModal('${p.id}')">+ Upload Document</span></div>
       <div class="hint" style="margin-bottom:10px;">Upload a Word doc (.docx) — your Google Drive templates work fine, just download them as .docx first — and edit the whole thing right here. Saved to this project; download when you're done. This edits a local copy only — it doesn't sync back to Google Drive.</div>
@@ -8536,7 +8570,7 @@ function submitAddProject(){
     projectType: document.getElementById('apjType').value,
     owner: document.getElementById('apjOwner').value.trim() || 'John Mitchell',
     referralPartner: document.getElementById('apjReferralPartner').value || null,
-    estimator: 'Estimator', currentPhase: 3, dealValue: null, feeAmount: null,
+    estimator: 'Estimator', currentPhase: 1, dealValue: null, feeAmount: null,
     preconStartDate: new Date().toISOString().slice(0,10), phaseEnteredDate: new Date().toISOString().slice(0,10),
     nextAction: { title: 'Kick off preconstruction', assigned: 'Unassigned', blocking: 'None', due: '—' },
     phases: buildFreshPhases()
