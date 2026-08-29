@@ -1503,6 +1503,11 @@ function renderTaskCenter(){
   </tr>`).join('') : `<tr><td colspan="6" class="empty-row">No tasks match these filters.</td></tr>`;
 }
 function fmtMoneyOrDash(v){ return v ? '$' + Number(v).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'; }
+function fmtShortDate(iso){
+  if(!iso) return '';
+  const d = new Date(iso+'T00:00:00');
+  return d.toLocaleDateString(undefined, {month:'numeric', day:'numeric', year:'2-digit'});
+}
 function fmtNoteDate(iso){
   if(!iso) return '';
   const d = new Date(iso + 'T00:00:00');
@@ -3468,15 +3473,25 @@ async function deleteOppAttachment(oppId, attId){
 function buildTaskRowHTML(oppId, t){
   const fileCount = (t.attachments || []).length;
   const status = t.status || (t.done ? 'Done' : 'Not Started');
-  const statusCls = status === 'Done' ? 'pill-jade' : status === 'Working On' ? 'pill-gold' : 'pill-slate';
-  return `<div class="task-row-mini" onclick="openTaskDetail('${oppId}','${t.id}')">
-    <span class="task-row-delete" onclick="event.stopPropagation(); deleteProjectTask('${oppId}','${t.id}')" title="Delete task">&times;</span>
-    <div class="task-row-title" style="${status === 'Done' ? 'color:var(--ink-faint); text-decoration:line-through;' : ''}">${t.tag ? `<span class="pill pill-gold" style="font-size:10px; padding:2px 7px; margin-right:6px; vertical-align:middle;">${escapeHtmlLite(t.tag)}</span>` : ''}${escapeHtmlLite(t.title) || '<span style="font-style:italic; color:var(--ink-faint);">Untitled task</span>'}</div>
-    <div class="task-row-meta">${escapeHtmlLite(t.assignee||'Unassigned')}${t.due ? ' \u00b7 Due ' + t.due : ''}${fileCount ? ' \u00b7 📎 ' + fileCount : ''}</div>
-    <select class="pill ${statusCls} task-row-status" style="width:auto;" onclick="event.stopPropagation();" onchange="event.stopPropagation(); setTaskStatus('${oppId}','${t.id}', this.value)">
-      ${['Not Started','Working On','Done'].map(o => `<option ${o===status?'selected':''}>${o}</option>`).join('')}
-    </select>
+  const circleStyle = status === 'Done' ? 'background:var(--jade); border-color:var(--jade);'
+    : status === 'Working On' ? 'background:var(--gold-soft); border-color:var(--gold);'
+    : 'background:transparent; border-color:var(--border);';
+  const circleMark = status === 'Done' ? '<span style="color:#fff; font-size:12px; line-height:1;">&#10003;</span>'
+    : status === 'Working On' ? '<span style="width:8px; height:8px; border-radius:50%; background:var(--gold);"></span>'
+    : '';
+  return `<div class="task-row-mini" onclick="openTaskDetail('${oppId}','${t.id}')" style="display:flex; align-items:flex-start; gap:12px;">
+    <span title="${escapeHtmlLite(status)} — click to change" style="flex-shrink:0; margin-top:1px; width:22px; height:22px; border-radius:50%; border:2px solid var(--border); ${circleStyle} display:flex; align-items:center; justify-content:center; cursor:pointer;" onclick="event.stopPropagation(); cycleTaskStatus('${oppId}','${t.id}','${status}')">${circleMark}</span>
+    <div style="flex:1; min-width:0;">
+      <span class="task-row-delete" onclick="event.stopPropagation(); deleteProjectTask('${oppId}','${t.id}')" title="Delete task">&times;</span>
+      <div class="task-row-title" style="padding-right:24px; ${status === 'Done' ? 'color:var(--ink-faint); text-decoration:line-through;' : ''}">${t.tag ? `<span class="pill pill-gold" style="font-size:10px; padding:2px 7px; margin-right:6px; vertical-align:middle;">${escapeHtmlLite(t.tag)}</span>` : ''}${escapeHtmlLite(t.title) || '<span style="font-style:italic; color:var(--ink-faint);">Untitled task</span>'}</div>
+      <div class="task-row-meta" style="padding-right:24px;">${t.due ? fmtShortDate(t.due) : 'No due date'}${t.assignee && t.assignee !== 'Unassigned' ? ' \u00b7 ' + escapeHtmlLite(t.assignee) : ''}${fileCount ? ' \u00b7 📎 ' + fileCount : ''}</div>
+    </div>
   </div>`;
+}
+function cycleTaskStatus(oppId, taskId, currentStatus){
+  const order = ['Not Started','Working On','Done'];
+  const next = order[(order.indexOf(currentStatus) + 1) % order.length];
+  setTaskStatus(oppId, taskId, next);
 }
 function setTaskStatus(oppId, taskId, status){
   const est = OPP_ESTIMATES[oppId];
