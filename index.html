@@ -4436,7 +4436,7 @@ function renderProcessEditorPanel(){
     <div class="hint" style="margin-bottom:4px;">"Typical Days" is per step, not per phase — a phase's total is however long its own steps actually add up to, not an arbitrary number split evenly across however many steps happen to be in it. This is what "Auto-Generate Baseline" uses on every new project.</div>
     ${PROCESS_PHASES.map(ph => { const totalDays = ph.steps.reduce((s,st) => s + (st.days||0), 0); return `
       <div style="margin:18px 0 8px; display:flex; align-items:center; gap:10px;">
-        <div style="font-weight:700; font-size:12.5px; color:var(--taupe-dark); text-transform:uppercase; letter-spacing:.03em;">Phase ${ph.n} ·</div>
+        <div style="font-weight:700; font-size:12.5px; color:var(--taupe-dark); text-transform:uppercase; letter-spacing:.03em; display:flex; align-items:center; gap:5px;">Phase <input type="number" min="1" value="${ph.n}" style="width:44px; padding:2px 4px; text-align:center; font-weight:700; font-size:12.5px;" title="Phase number — controls run order; must be unique. Changing this updates every project already on this phase." onchange="setProcessPhaseNumber(${ph.n}, parseInt(this.value,10))"> ·</div>
         <input value="${escapeHtmlLite(ph.name)}" style="max-width:280px; font-weight:600;" onchange="setProcessPhaseName(${ph.n}, this.value)">
         <span class="pill pill-slate" style="margin-left:auto; font-size:10px;">${totalDays} typical business days total</span>
         <span style="cursor:pointer; color:var(--rust); font-size:15px; padding:0 4px;" onclick="removeProcessPhase(${ph.n})" title="Delete this entire phase">&times;</span>
@@ -4472,6 +4472,40 @@ function setProcessPhaseName(phaseN, value){
   const ph = phaseDef(phaseN); if(!ph) return;
   ph.name = value.trim() || ph.name;
   saveAppState();
+}
+// ---- Editing a phase's number touches more than just PROCESS_PHASES — every already-saved
+// project carries that same number in its currentPhase, its legacy phase tracker, its
+// baseline schedule, and the new engine's workflow state. All of those move together here,
+// the same way the one-time legacy-numbering migration moves them, so a renumber never
+// leaves a project's data pointing at a phase number that no longer exists. ----
+async function setProcessPhaseNumber(oldN, newN){
+  if(!Number.isInteger(newN) || newN < 1){ alert('Phase number has to be a whole number, 1 or higher.'); renderProcessEditorPanel(); return; }
+  if(newN === oldN) return;
+  if(PROCESS_PHASES.some(p => p.n === newN)){ alert(`Phase ${newN} is already in use — pick a different number, or renumber that phase first.`); renderProcessEditorPanel(); return; }
+  const ph = phaseDef(oldN); if(!ph) return;
+  if(!await customConfirm(`Change "${ph.name}" from Phase ${oldN} to Phase ${newN}? This updates the number everywhere it's used, including on every project already sitting on this phase.`)) return;
+  ph.n = newN;
+  const legacyDef = WORKFLOW_PHASE_DEFS.find(pd => pd.n === oldN);
+  if(legacyDef) legacyDef.n = newN;
+  if(PHASE_DESCRIPTIONS && PHASE_DESCRIPTIONS[oldN] !== undefined){
+    PHASE_DESCRIPTIONS[newN] = PHASE_DESCRIPTIONS[oldN];
+    delete PHASE_DESCRIPTIONS[oldN];
+  }
+  Object.values(PROJECTS).forEach(p => {
+    if(p.currentPhase === oldN) p.currentPhase = newN;
+    if(Array.isArray(p.phases)) p.phases.forEach(x => { if(x.n === oldN) x.n = newN; });
+    if(Array.isArray(p.baselineSchedule)) p.baselineSchedule.forEach(x => { if(x.n === oldN) x.n = newN; });
+    if(p.workflow){
+      if(p.workflow.currentStageN === oldN) p.workflow.currentStageN = newN;
+      if(Array.isArray(p.workflow.stages)) p.workflow.stages.forEach(x => { if(x.n === oldN) x.n = newN; });
+    }
+  });
+  // Keep both lists sorted by number so the editor, the phase rail, and the dashboard all
+  // display phases in the same order they'll actually run in — not the order they happen
+  // to have been created in.
+  PROCESS_PHASES.sort((a,b) => a.n - b.n);
+  WORKFLOW_PHASE_DEFS.sort((a,b) => a.n - b.n);
+  saveAppState(); renderProcessEditorPanel();
 }
 function setProcessStepField(phaseN, stepId, field, value){
   const ph = phaseDef(phaseN); if(!ph) return;
