@@ -4451,6 +4451,10 @@ function renderProcessEditorPanel(){
             <option value="">— pick the step it goes back to —</option>
             ${ph.steps.filter(s2 => s2.id !== step.id).map(s2 => `<option value="${s2.id}" ${step.revisesStepId===s2.id?'selected':''}>${escapeHtmlLite(s2.title)}</option>`).join('')}
           </select>` : ''}
+          <label style="display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--ink-faint); white-space:nowrap; cursor:pointer;" title="Flags this step as needing a meeting, and who it involves — shows on the project overview when this step is active">
+            <input type="checkbox" ${step.needsMeeting?'checked':''} onchange="setProcessStepField(${ph.n},'${step.id}','needsMeeting',this.checked); renderProcessEditorPanel();"> Needs Meeting
+          </label>
+          ${step.needsMeeting ? `<span class="pill pill-slate" style="cursor:pointer; font-size:10.5px;" onclick="openMeetingAttendeesPicker(${ph.n},'${step.id}')">📅 ${meetingAttendeesSummary(step)}</span>` : ''}
           <button class="btn btn-outline btn-sm" ${i===0?'disabled':''} onclick="moveProcessStep(${ph.n},'${step.id}',-1)" title="Move up">↑</button>
           <button class="btn btn-outline btn-sm" ${i===ph.steps.length-1?'disabled':''} onclick="moveProcessStep(${ph.n},'${step.id}',1)" title="Move down">↓</button>
           <span style="cursor:pointer; color:var(--rust); font-size:16px; padding:0 4px;" onclick="removeProcessStep(${ph.n},'${step.id}')" title="Remove step">&times;</span>
@@ -4493,6 +4497,45 @@ async function addProcessStep(phaseN){
   const id = 'p' + phaseN + 's_' + Date.now();
   ph.steps.push({ id, title: title.trim(), role: '', days: 2 });
   saveAppState(); renderProcessEditorPanel();
+}
+// ---- The fixed set of "who might be in the room" options for a step's meeting — kept as
+// a short, stable list of roles/parties rather than a free-for-all so the summary chip stays
+// short and scannable, not a wall of names. ----
+const MEETING_ATTENDEE_OPTIONS = ['Architect','Designer','Client','Estimator','Subcontractor','Entire Team'];
+function meetingAttendeesSummary(step){
+  const list = step.meetingWith || [];
+  if(!list.length) return 'Who\u2019s involved?';
+  if(list.length <= 2) return list.join(', ');
+  return list.slice(0,2).join(', ') + ' +' + (list.length - 2);
+}
+// ---- Deliberately a small popover-style overlay, not a giant form — this is the ONE thing
+// this control needs to do (pick a short list of parties), so it stays a single checkbox list
+// with a Done button instead of growing into a bigger modal. ----
+function openMeetingAttendeesPicker(phaseN, stepId){
+  const ph = phaseDef(phaseN); if(!ph) return;
+  const step = ph.steps.find(s => s.id === stepId); if(!step) return;
+  if(!step.meetingWith) step.meetingWith = [];
+  openQuickOverlay(`
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div class="panel-title" style="margin-bottom:0;">Who\u2019s in this meeting?</div>
+      <span style="cursor:pointer; color:var(--ink-faint); font-size:20px;" onclick="closeQuickOverlay(); renderProcessEditorPanel();">&times;</span>
+    </div>
+    <div class="hint" style="margin-bottom:12px;">"${escapeHtmlLite(step.title)}" — check everyone who typically needs to be in this meeting.</div>
+    ${MEETING_ATTENDEE_OPTIONS.map(name => `<label style="display:flex; align-items:center; gap:8px; padding:7px 0; cursor:pointer; font-size:13.5px;">
+      <input type="checkbox" ${step.meetingWith.includes(name)?'checked':''} onchange="toggleMeetingAttendee(${phaseN},'${stepId}','${name}',this.checked)"> ${name}
+    </label>`).join('')}
+    <div class="row" style="margin-top:16px; justify-content:flex-end;">
+      <button class="btn btn-dark" onclick="closeQuickOverlay(); renderProcessEditorPanel();">Done</button>
+    </div>
+  `, 360);
+}
+function toggleMeetingAttendee(phaseN, stepId, name, checked){
+  const ph = phaseDef(phaseN); if(!ph) return;
+  const step = ph.steps.find(s => s.id === stepId); if(!step) return;
+  if(!step.meetingWith) step.meetingWith = [];
+  if(checked){ if(!step.meetingWith.includes(name)) step.meetingWith.push(name); }
+  else { step.meetingWith = step.meetingWith.filter(n => n !== name); }
+  saveAppState();
 }
 function renderRoleAssigneesPanel(){
   const host = document.getElementById('roleAssigneesPanel');
@@ -5742,6 +5785,7 @@ function buildHeroInnerHTML(p){
     <div class="hero-label">Phase ${ph.n} · ${escapeHtmlLite(ph.name)} — Step ${index+1} of ${total}${dueBadge}${isInProgress ? `<span class="duebadge duebadge-progress">In Progress</span>` : ''}</div>
     <div class="hero-title">${escapeHtmlLite(def.title)}</div>
     <div class="hero-meta">${escapeHtmlLite(def.role)}${isBlocked && a.blockerNote ? ` — Blocked: ${escapeHtmlLite(a.blockerNote)}${a.blockedParty ? ` · ${escapeHtmlLite(a.blockedParty)}` : ''}` : ''}</div>
+    ${def.needsMeeting ? `<div class="hero-meta" style="margin-top:2px;">📅 Meeting needed — ${escapeHtmlLite((def.meetingWith && def.meetingWith.length) ? def.meetingWith.join(', ') : 'attendees not yet set')}</div>` : ''}
     <div class="hero-row">
       <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></div>
       ${a.baselineDue ? `<div><label>Baseline Was</label><div style="font-size:13px; color:var(--ink-faint); padding-top:8px;">${fmtNoteDate(a.baselineDue)}</div></div>` : ''}
