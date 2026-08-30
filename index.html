@@ -544,8 +544,10 @@ tbody tr:hover{background:#FCFBF8;}
 .roadmap-phase.active .roadmap-dot{background:var(--paper); border-color:var(--gold); color:var(--gold); box-shadow:0 0 0 4px var(--gold-soft);}
 .roadmap-phase-name{font-family:'Montserrat',sans-serif; font-size:10.5px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--ink-soft); line-height:1.3;}
 .roadmap-phase-pct{font-size:11px; color:var(--ink-faint); margin-top:3px;}
-.phase-meaning-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(270px, 1fr)); gap:16px;}
-.phase-meaning-card{background:var(--paper); border:1px solid var(--border-soft); border-top:3px solid var(--taupe); border-radius:12px; padding:20px 22px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.03);}
+.phase-meaning-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 280px)); justify-content:center; gap:16px;}
+.phase-meaning-card{background:var(--paper); border:1px solid var(--border-soft); border-top:3px solid var(--taupe); border-radius:12px; padding:20px 22px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.03); position:relative;}
+.phase-meaning-card.current{background:var(--gold-soft); border-color:var(--gold); box-shadow:0 3px 12px rgba(166,144,100,0.28); transform:scale(1.03);}
+.phase-meaning-current-tag{position:absolute; top:-11px; right:16px; background:var(--gold); color:#fff; font-family:'Montserrat',sans-serif; font-size:9.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:4px 10px; border-radius:20px;}
 .phase-meaning-badge{width:30px; height:30px; border-radius:50%; color:#fff; display:flex; align-items:center; justify-content:center; font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:13px; margin-bottom:12px;}
 .phase-meaning-name{font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700; margin-bottom:8px; color:var(--ink); line-height:1.3;}
 .phase-meaning-desc{font-size:13px; line-height:1.65; color:var(--ink-soft);}
@@ -6970,7 +6972,7 @@ let PHASE_DESCRIPTIONS = {
   5: 'We\u2019re pricing every trade and finalizing the real construction budget.',
   6: 'Final contract details and paperwork before we break ground.',
 };
-function buildClientPhaseDescriptionsHTML(){
+function buildClientPhaseDescriptionsHTML(project){
   const phases = PROCESS_PHASES.filter(ph => PHASE_DESCRIPTIONS[ph.n]);
   if(!phases.length) return '';
   return `
@@ -6978,7 +6980,9 @@ function buildClientPhaseDescriptionsHTML(){
     <div class="phase-meaning-grid" style="margin-bottom:24px;">
       ${phases.map(ph => {
         const color = PRECON_PHASE_COLORS[ph.n] || 'var(--taupe)';
-        return `<div class="phase-meaning-card" style="border-top-color:${color};">
+        const isCurrent = !!project && project.currentPhase === ph.n;
+        return `<div class="phase-meaning-card${isCurrent ? ' current' : ''}" style="border-top-color:${color};">
+          ${isCurrent ? `<div class="phase-meaning-current-tag">Current Phase</div>` : ''}
           <div class="phase-meaning-badge" style="background:${color};">${ph.n}</div>
           <div class="phase-meaning-name">${escapeHtmlLite(ph.name)}</div>
           <div class="phase-meaning-desc">${escapeHtmlLite(PHASE_DESCRIPTIONS[ph.n])}</div>
@@ -7134,7 +7138,7 @@ function buildClientProgressContentHTML(p){
     <div class="client-view-panel" data-panel="schedule" style="display:${CLIENT_VIEW_ACTIVE_TAB==='schedule'?'':'none'};">
       <div class="section-label-row"><div class="eyebrow">Full Schedule</div></div>
       ${buildClientProgressScheduleHTML(p)}
-      ${buildClientPhaseDescriptionsHTML()}
+      ${buildClientPhaseDescriptionsHTML(p)}
     </div>
     <div class="client-view-panel" data-panel="updates" style="display:${CLIENT_VIEW_ACTIVE_TAB==='updates'?'':'none'};">
       <div class="section-label-row"><div class="eyebrow">Project Updates</div></div>
