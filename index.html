@@ -4483,9 +4483,29 @@ function renderProcessEditorPanel(){
     <button class="btn btn-outline" style="margin-top:22px;" onclick="addProcessPhase()">+ Add Phase</button>
   </div>`;
 }
+// ---- WORKFLOW_PHASE_DEFS (the legacy phase tracker, dashboard cards, phase-description
+// panel, and default-assignees panel) is only allowed to disagree with PROCESS_PHASES — the
+// list edited in Manage Process — on one thing: milestoneNames, which PROCESS_PHASES has no
+// equivalent for. Everything else (which phases exist, their numbers, their names) is decided
+// by PROCESS_PHASES alone. This rebuilds WORKFLOW_PHASE_DEFS to match it exactly — same
+// phases, same numbers, same names, same order — carrying over each phase's milestoneNames by
+// matching on its old name so existing per-milestone assignee defaults aren't lost. Called
+// after every rename/add/delete/renumber, and once on every app load, so a rename in Manage
+// Process can never drift out of sync with what these other panels show — the two screenshots
+// (Phase Descriptions, Default Assignees) always mirror Manage Process, not a separately
+// maintained copy of it. ----
+function syncWorkflowPhaseDefsFromProcessPhases(){
+  const rebuilt = PROCESS_PHASES.slice().sort((a,b) => a.n - b.n).map(ph => {
+    const existing = WORKFLOW_PHASE_DEFS.find(pd => pd.name === ph.name);
+    return { n: ph.n, name: ph.name, milestoneNames: (existing && existing.milestoneNames) || [] };
+  });
+  WORKFLOW_PHASE_DEFS.length = 0;
+  WORKFLOW_PHASE_DEFS.push(...rebuilt);
+}
 function setProcessPhaseName(phaseN, value){
   const ph = phaseDef(phaseN); if(!ph) return;
   ph.name = value.trim() || ph.name;
+  syncWorkflowPhaseDefsFromProcessPhases();
   saveAppState();
 }
 // ---- Editing a phase's number touches more than just PROCESS_PHASES — every already-saved
@@ -4500,8 +4520,6 @@ async function setProcessPhaseNumber(oldN, newN){
   const ph = phaseDef(oldN); if(!ph) return;
   if(!await customConfirm(`Change "${ph.name}" from Phase ${oldN} to Phase ${newN}? This updates the number everywhere it's used, including on every project already sitting on this phase.`)) return;
   ph.n = newN;
-  const legacyDef = WORKFLOW_PHASE_DEFS.find(pd => pd.n === oldN);
-  if(legacyDef) legacyDef.n = newN;
   if(PHASE_DESCRIPTIONS && PHASE_DESCRIPTIONS[oldN] !== undefined){
     PHASE_DESCRIPTIONS[newN] = PHASE_DESCRIPTIONS[oldN];
     delete PHASE_DESCRIPTIONS[oldN];
@@ -4515,11 +4533,10 @@ async function setProcessPhaseNumber(oldN, newN){
       if(Array.isArray(p.workflow.stages)) p.workflow.stages.forEach(x => { if(x.n === oldN) x.n = newN; });
     }
   });
-  // Keep both lists sorted by number so the editor, the phase rail, and the dashboard all
-  // display phases in the same order they'll actually run in — not the order they happen
-  // to have been created in.
+  // Keep sorted by number so the editor, the phase rail, and the dashboard all display
+  // phases in the order they'll actually run in — not the order they happened to be created.
   PROCESS_PHASES.sort((a,b) => a.n - b.n);
-  WORKFLOW_PHASE_DEFS.sort((a,b) => a.n - b.n);
+  syncWorkflowPhaseDefsFromProcessPhases();
   saveAppState(); renderProcessEditorPanel();
 }
 function setProcessStepField(phaseN, stepId, field, value){
@@ -4562,10 +4579,7 @@ async function addProcessPhase(){
   const trimmed = name.trim();
   const nextN = PROCESS_PHASES.length ? Math.max(...PROCESS_PHASES.map(ph => ph.n)) + 1 : 1;
   PROCESS_PHASES.push({ n: nextN, name: trimmed, steps: [] });
-  // WORKFLOW_PHASE_DEFS (the legacy phase tracker / dashboard / Company Settings panels)
-  // has to mirror PROCESS_PHASES exactly, or a new phase would show up in the process
-  // editor but be invisible everywhere else that reads phase names from the legacy list.
-  WORKFLOW_PHASE_DEFS.push({ n: nextN, name: trimmed, milestoneNames: [] });
+  syncWorkflowPhaseDefsFromProcessPhases();
   if(!PRECON_PHASE_COLORS[nextN]) PRECON_PHASE_COLORS[nextN] = PRECON_PHASE_COLOR_PALETTE[(nextN - 1) % PRECON_PHASE_COLOR_PALETTE.length];
   saveAppState(); renderProcessEditorPanel();
 }
@@ -4574,8 +4588,7 @@ async function removeProcessPhase(phaseN){
   const ph = phaseDef(phaseN); if(!ph) return;
   if(!await customConfirm(`Delete Phase ${ph.n} · "${ph.name}" and all ${ph.steps.length} of its steps? Any project currently sitting on this phase will need to be moved manually afterward. This can't be undone.`)) return;
   PROCESS_PHASES = PROCESS_PHASES.filter(p => p.n !== phaseN);
-  const legacyIdx = WORKFLOW_PHASE_DEFS.findIndex(pd => pd.n === phaseN);
-  if(legacyIdx !== -1) WORKFLOW_PHASE_DEFS.splice(legacyIdx, 1);
+  syncWorkflowPhaseDefsFromProcessPhases();
   saveAppState(); renderProcessEditorPanel();
 }
 // ---- The "who might be in the room" options for a step's meeting — editable in Company
@@ -9199,6 +9212,7 @@ function applyAppSnapshot(snap){
   if(Array.isArray(snap.WORKFLOW_PHASE_DEFS)){ WORKFLOW_PHASE_DEFS.length = 0; WORKFLOW_PHASE_DEFS.push(...snap.WORKFLOW_PHASE_DEFS); }
   if(snap.themeVars) applyThemeVars(snap.themeVars);
   migrateLegacyPhaseNumbering();
+  syncWorkflowPhaseDefsFromProcessPhases();
 }
 // ---- Data saved before Preconstruction phases were renumbered to start at 1 still has
 // "Design Discovery" at Phase 3 baked in — not just in the process template, but frozen into
