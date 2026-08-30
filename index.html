@@ -5249,8 +5249,7 @@ async function goBackOneStep(projectId){
     }
     prevSt.status = 'In Progress';
     prevSt.completedAt = null;
-    prevSt.heroNote = null;
-    clearHeroNote(stage, next.def.id);
+    // Notes log persists across status changes now, intentionally — not cleared here.
     getStepState(stage, next.def.id).status = 'Not Ready';
   } else {
     const prevStage = wf.stages.find(s => s.n === wf.currentStageN - 1);
@@ -5270,7 +5269,6 @@ async function goBackOneStep(projectId){
     p.currentPhase = prevStage.n; // keep the legacy field in sync — see the note in recomputeStage
     lastSt.status = 'In Progress';
     lastSt.completedAt = null;
-    lastSt.heroNote = null;
   }
   recomputeStage(p);
   saveAppState(); renderProjectDetail(); renderProjectCardGrids();
@@ -5282,7 +5280,6 @@ function setStepStatus(projectId, stepId, status){
   const ph = phaseDef(wf.currentStageN);
   const st = getStepState(stage, stepId);
   st.status = status;
-  st.heroNote = null; // status changed — any note left on the hero is scoped to the old state, so it clears
   if(status === 'Complete'){
     const today = new Date().toISOString().slice(0,10);
     st.completedAt = today;
@@ -5969,17 +5966,59 @@ function buildStageRailHTML(p){
 // actually happening" or "here's what's coming up next." Tied to the specific step, not the
 // project, since it's scoped to this exact moment in the process: the moment the step's
 // status changes (Complete, Waiting, Blocked, In Revision, Ready, reopened via Go Back —
-// anything), clearHeroNote() below wipes it, so the next person to land on the hero always
-// starts from blank rather than reading stale context left over from a different state. ----
-function buildHeroNotesHTML(p, stepId, currentNote){
+// anything) — the log persists across every status change, so nobody landing on the hero
+// loses the history of what was noted along the way. ----
+// ---- Notes is a running log now, not a single overwritable field — each entry keeps its
+// own date and the name of whoever logged it, and nothing here gets wiped when the step's
+// status changes. getHeroNotes() reads a legacy single heroNote string as one dateless entry
+// so nothing written before this change disappears. ----
+function getHeroNotes(st){
+  if(Array.isArray(st.heroNotes)) return st.heroNotes;
+  if(st.heroNote) return [{ id: 'legacy', text: st.heroNote, date: null, author: null }];
+  return [];
+}
+function addHeroNote(projectId, stepId, text){
+  const trimmed = (text || '').trim();
+  if(!trimmed) return;
+  const p = PROJECTS[projectId]; if(!p) return;
+  const wf = ensureWorkflowModel(p);
+  const stage = wf.stages.find(s => s.n === wf.currentStageN);
+  const st = getStepState(stage, stepId);
+  if(!Array.isArray(st.heroNotes)){
+    st.heroNotes = st.heroNote ? [{ id: 'n' + Date.now() + '_legacy', text: st.heroNote, date: null, author: null }] : [];
+  }
+  st.heroNote = null; // fully migrated onto the log array from here on
+  st.heroNotes.push({ id: 'n' + Date.now(), text: trimmed, date: new Date().toISOString().slice(0,10), author: CURRENT_LOGGED_IN_USER || 'Unknown' });
+  saveAppState(); renderProjectDetail();
+}
+async function deleteHeroNote(projectId, stepId, noteId){
+  if(!await customConfirm('Delete this note? This can\'t be undone.')) return;
+  const p = PROJECTS[projectId]; if(!p) return;
+  const wf = ensureWorkflowModel(p);
+  const stage = wf.stages.find(s => s.n === wf.currentStageN);
+  const st = getStepState(stage, stepId);
+  if(Array.isArray(st.heroNotes)) st.heroNotes = st.heroNotes.filter(n => n.id !== noteId);
+  saveAppState(); renderProjectDetail();
+}
+function buildHeroNotesHTML(p, stepId){
+  const wf = ensureWorkflowModel(p);
+  const stage = wf.stages.find(s => s.n === wf.currentStageN);
+  const st = getStepState(stage, stepId);
+  const notes = getHeroNotes(st).slice().reverse();
   return `<div class="hero-notes">
     <label>Notes</label>
-    <textarea placeholder="What's happening on this right now, or what's coming up next…" onchange="setStepField('${p.id}','${stepId}','heroNote', this.value)">${escapeHtmlLite(currentNote || '')}</textarea>
+    <textarea id="heroNoteInput_${stepId}" placeholder="What's happening on this right now, or what's coming up next…"></textarea>
+    <div class="row" style="justify-content:flex-end; margin-top:4px;">
+      <button class="btn btn-outline btn-sm" onclick="addHeroNote('${p.id}','${stepId}', document.getElementById('heroNoteInput_${stepId}').value)">+ Log Note</button>
+    </div>
+    ${notes.length ? notes.map(n => `<div style="padding:8px 0; border-top:1px solid var(--border-soft);">
+      <div style="font-size:11px; color:var(--ink-faint); display:flex; justify-content:space-between; gap:8px;">
+        <span>${n.date ? fmtNoteDate(n.date) : 'Earlier'}${n.author ? ' \u00b7 ' + escapeHtmlLite(n.author) : ''}</span>
+        ${n.id !== 'legacy' ? `<span style="cursor:pointer; color:var(--rust);" onclick="deleteHeroNote('${p.id}','${stepId}','${n.id}')" title="Delete note">&times;</span>` : ''}
+      </div>
+      <div style="font-size:13.5px; color:var(--ink-soft); margin-top:2px; line-height:1.5;">${escapeHtmlLite(n.text)}</div>
+    </div>`).join('') : ''}
   </div>`;
-}
-function clearHeroNote(stage, stepId){
-  const st = getStepState(stage, stepId);
-  st.heroNote = null;
 }
 // ---- Returns just the inner content + status class for the current hero state, without
 // the outer box — buildNextActionHeroHTML wraps this together with the Tasks column into
@@ -6012,7 +6051,7 @@ function buildHeroInnerHTML(p){
         <div class="hero-label">Phase ${ph.n} · ${escapeHtmlLite(ph.name)} — Waiting</div>
         <div class="hero-title">${escapeHtmlLite(w.def.title)}</div>
         <div class="hero-meta">${w.a.waitingParty ? `Waiting on <b>${escapeHtmlLite(w.a.waitingParty)}</b>` : ''}${w.a.waitingExpected ? ` · expected ${escapeHtmlLite(w.a.waitingExpected)}` : ''}</div>
-        ${buildHeroNotesHTML(p, w.def.id, w.a.heroNote)}
+        ${buildHeroNotesHTML(p, w.def.id)}
         <div class="row" style="margin-top:12px; gap:8px;">
           <button class="btn btn-outline btn-sm" onclick="setStepStatus('${p.id}','${w.def.id}','Ready')">They responded — mark Ready</button>
         </div>` };
@@ -6024,7 +6063,7 @@ function buildHeroInnerHTML(p){
         <div class="hero-label">Phase ${ph.n} · ${escapeHtmlLite(ph.name)} — In Revision${r.a.revisionRounds ? ` (Round ${r.a.revisionRounds})` : ''}</div>
         <div class="hero-title">${escapeHtmlLite(r.def.title)}</div>
         <div class="hero-meta">${r.a.revisionParty ? `With <b>${escapeHtmlLite(r.a.revisionParty)}</b> for revision` : 'Sent back for revision'}${r.a.revisionExpected ? ` · expected back ${escapeHtmlLite(r.a.revisionExpected)}` : ''}${r.a.revisionNote ? ` — ${escapeHtmlLite(r.a.revisionNote)}` : ''}</div>
-        ${buildHeroNotesHTML(p, r.def.id, r.a.heroNote)}
+        ${buildHeroNotesHTML(p, r.def.id)}
         <div class="row" style="margin-top:12px; gap:8px;">
           <button class="btn btn-outline btn-sm" onclick="setStepStatus('${p.id}','${r.def.id}','Ready')">Revised copy is back — mark Ready</button>
         </div>` };
@@ -6063,7 +6102,7 @@ function buildHeroInnerHTML(p){
       <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></div>
       ${a.baselineDue ? `<div><label>Baseline Was</label><div style="font-size:13px; color:var(--ink-faint); padding-top:8px;">${fmtNoteDate(a.baselineDue)}</div></div>` : ''}
     </div>
-    ${buildHeroNotesHTML(p, def.id, a.heroNote)}
+    ${buildHeroNotesHTML(p, def.id)}
     <div class="row" style="margin-top:14px; gap:8px; flex-wrap:wrap;">
       <button class="btn btn-outline" style="color:var(--ink-faint); border-color:var(--border);" onclick="goBackOneStep('${p.id}')" title="Reopens the previous step (or the previous phase, if this is the first step) — a manual correction, not part of the normal flow forward">◀ Go Back</button>
       ${!isInProgress && !isBlocked ? `<button class="btn btn-outline" onclick="setStepStatus('${p.id}','${def.id}','In Progress')">Start</button>` : ''}
@@ -6268,7 +6307,6 @@ function submitMarkRevision(projectId, stepId){
   st.revisionExpected = document.getElementById('rvExpected').value || null;
   st.revisionRounds = (st.revisionRounds || 0) + 1;
   st.status = 'In Revision';
-  st.heroNote = null;
 
   if(def && def.revisesStepId){
     const parentIdx = ph.steps.findIndex(s => s.id === def.revisesStepId);
@@ -6276,13 +6314,11 @@ function submitMarkRevision(projectId, stepId){
     if(parentIdx !== -1 && parentIdx < thisIdx){
       const parentSt = getStepState(stage, def.revisesStepId);
       parentSt.status = 'In Progress';
-      parentSt.heroNote = null;
       // Everything strictly between the parent and this review step has to be redone too —
       // reset it so the normal sequential engine naturally walks back through it once the
       // parent is marked Complete again, instead of skipping straight back to this step.
       for(let i = parentIdx + 1; i < thisIdx; i++){
-        clearHeroNote(stage, ph.steps[i].id);
-        getStepState(stage, ph.steps[i].id).status = 'Not Ready';
+        getStepState(stage, ph.steps[i].id).status = 'Not Ready'; // notes log stays intact
       }
     }
   }
