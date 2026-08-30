@@ -544,6 +544,11 @@ tbody tr:hover{background:#FCFBF8;}
 .roadmap-phase.active .roadmap-dot{background:var(--paper); border-color:var(--gold); color:var(--gold); box-shadow:0 0 0 4px var(--gold-soft);}
 .roadmap-phase-name{font-family:'Montserrat',sans-serif; font-size:10.5px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--ink-soft); line-height:1.3;}
 .roadmap-phase-pct{font-size:11px; color:var(--ink-faint); margin-top:3px;}
+.phase-meaning-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(270px, 1fr)); gap:16px;}
+.phase-meaning-card{background:var(--paper); border:1px solid var(--border-soft); border-top:3px solid var(--taupe); border-radius:12px; padding:20px 22px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.03);}
+.phase-meaning-badge{width:30px; height:30px; border-radius:50%; color:#fff; display:flex; align-items:center; justify-content:center; font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:13px; margin-bottom:12px;}
+.phase-meaning-name{font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700; margin-bottom:8px; color:var(--ink); line-height:1.3;}
+.phase-meaning-desc{font-size:13px; line-height:1.65; color:var(--ink-soft);}
 
 .milestone-list{list-style:none; margin:0; padding:0;}
 .milestone-item{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border-soft); font-size:13px;}
@@ -4707,17 +4712,108 @@ async function removeMeetingAttendeeOption(index){
   });
   saveAppState(); renderMeetingAttendeesPicker();
 }
+// ---- A role like "S/C & Estimator" can genuinely need more than one person — an outsourced
+// sub and an in-house estimator both covering it — and not every name that fills a role is
+// on the internal team roster. ROLE_DEFAULT_ASSIGNEE stores a LIST per role rather than one
+// name, and EXTERNAL_CONTACTS is a separate, freely-editable list of outsourced/external
+// people (vendors, architects, subs) who can be picked here without needing a login account
+// on the internal TEAM_ROSTER. getRoleDefaultAssignees() normalizes on read so any
+// already-saved single-string default from before this change still works. ----
+let EXTERNAL_CONTACTS = [];
+function getRoleDefaultAssignees(role){
+  const v = ROLE_DEFAULT_ASSIGNEE[role];
+  if(Array.isArray(v)) return v;
+  if(typeof v === 'string' && v) return [v];
+  return [];
+}
+// The single "Assigned To" field on an individual step can only hold one name — when a role
+// has multiple default people, the first one checked is used as that starting point; anyone
+// can still change it per step.
+function getPrimaryRoleDefaultAssignee(role){
+  return getRoleDefaultAssignees(role)[0] || '';
+}
+function assignablePeopleList(){
+  return [...TEAM_MEMBERS, ...EXTERNAL_CONTACTS];
+}
 function renderRoleAssigneesPanel(){
   const host = document.getElementById('roleAssigneesPanel');
   if(!host) return;
   const rolesInUse = Array.from(new Set(PROCESS_PHASES.flatMap(ph => ph.steps.map(s => s.role)).filter(Boolean)));
   host.innerHTML = `<div class="panel-body" style="padding:16px 20px;">
-    ${rolesInUse.length ? rolesInUse.map(role => `<div class="list-row"><span class="main-txt" style="font-size:13px;">${escapeHtmlLite(role)}</span><select style="max-width:200px;" onchange="setRoleDefaultAssignee('${role.replace(/'/g,"\\'")}', this.value)">${teamMemberOptions(ROLE_DEFAULT_ASSIGNEE[role] || '')}</select></div>`).join('') : '<div class="empty-row">No roles defined yet — add steps above with a role to set defaults here.</div>'}
+    ${rolesInUse.length ? rolesInUse.map(role => {
+      const list = getRoleDefaultAssignees(role);
+      const summary = !list.length ? 'Unassigned' : list.length <= 2 ? list.join(', ') : list.slice(0,2).join(', ') + ' +' + (list.length - 2);
+      return `<div class="list-row"><span class="main-txt" style="font-size:13px;">${escapeHtmlLite(role)}</span><span class="pill pill-slate" style="cursor:pointer; max-width:260px; text-align:right;" onclick="openRoleAssigneesPicker('${role.replace(/'/g,"\\'")}')">${escapeHtmlLite(summary)}</span></div>`;
+    }).join('') : '<div class="empty-row">No roles defined yet — add steps above with a role to set defaults here.</div>'}
   </div>`;
 }
-function setRoleDefaultAssignee(role, value){
-  ROLE_DEFAULT_ASSIGNEE[role] = value || null;
+// ---- Small popover, same pattern as the meeting-attendees picker — check everyone who
+// covers this role (in-house or outsourced), and add a new outsourced person right here if
+// they're not on the list yet, instead of needing to go set up a full team-member account
+// for someone who isn't actually on staff. ----
+let ROLE_ASSIGNEES_PICKER_ROLE = null;
+function openRoleAssigneesPicker(role){
+  ROLE_ASSIGNEES_PICKER_ROLE = role;
+  renderRoleAssigneesPicker();
+}
+function closeRoleAssigneesPicker(){
+  closeQuickOverlay();
+  ROLE_ASSIGNEES_PICKER_ROLE = null;
+  renderRoleAssigneesPanel();
+}
+function renderRoleAssigneesPicker(){
+  const role = ROLE_ASSIGNEES_PICKER_ROLE;
+  if(!role) return;
+  const selected = getRoleDefaultAssignees(role);
+  openQuickOverlay(`
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <div class="panel-title" style="margin-bottom:0;">Who fills "${escapeHtmlLite(role)}"?</div>
+      <span style="cursor:pointer; color:var(--ink-faint); font-size:20px;" onclick="closeRoleAssigneesPicker();">&times;</span>
+    </div>
+    <div class="hint" style="margin-bottom:12px;">Check everyone who typically covers this role — in-house or outsourced. More than one is fine.</div>
+    ${TEAM_MEMBERS.map(name => `<label style="display:flex; align-items:center; gap:8px; padding:6px 0; cursor:pointer; font-size:13.5px;">
+      <input type="checkbox" ${selected.includes(name)?'checked':''} onchange="toggleRoleDefaultAssignee('${role.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}',this.checked)"> ${escapeHtmlLite(name)}
+    </label>`).join('')}
+    ${EXTERNAL_CONTACTS.length ? `<div style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-faint); margin:12px 0 4px;">Outsourced / External</div>` : ''}
+    ${EXTERNAL_CONTACTS.map(name => `<div style="display:flex; align-items:center; gap:8px; padding:6px 0;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13.5px; flex:1;">
+        <input type="checkbox" ${selected.includes(name)?'checked':''} onchange="toggleRoleDefaultAssignee('${role.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}',this.checked)"> ${escapeHtmlLite(name)}
+      </label>
+      <span style="cursor:pointer; color:var(--rust); font-size:15px; padding:0 4px;" onclick="removeExternalContact('${name.replace(/'/g,"\\'")}')" title="Remove from the assignable people list">&times;</span>
+    </div>`).join('')}
+    <div class="row" style="margin-top:12px; gap:8px;">
+      <input type="text" id="newExternalContactInput" placeholder="e.g. Jane Doe (ABC Architecture)" onkeydown="if(event.key==='Enter') addExternalContact()">
+      <button class="btn btn-outline" onclick="addExternalContact()">+ Add Person</button>
+    </div>
+    <div class="row" style="margin-top:16px; justify-content:flex-end;">
+      <button class="btn btn-dark" onclick="closeRoleAssigneesPicker();">Done</button>
+    </div>
+  `, 380);
+}
+function toggleRoleDefaultAssignee(role, name, checked){
+  const list = getRoleDefaultAssignees(role).slice();
+  if(checked){ if(!list.includes(name)) list.push(name); }
+  else { const i = list.indexOf(name); if(i !== -1) list.splice(i, 1); }
+  ROLE_DEFAULT_ASSIGNEE[role] = list;
   saveAppState();
+}
+function addExternalContact(){
+  const input = document.getElementById('newExternalContactInput');
+  const name = input.value.trim();
+  if(!name) return;
+  if(assignablePeopleList().includes(name)){ alert('That name is already on the list.'); return; }
+  EXTERNAL_CONTACTS.push(name);
+  input.value = '';
+  saveAppState(); renderRoleAssigneesPicker();
+}
+async function removeExternalContact(name){
+  if(!await customConfirm(`Remove "${name}" from the assignable people list? They'll also be unchecked from any role they're currently a default for.`)) return;
+  EXTERNAL_CONTACTS = EXTERNAL_CONTACTS.filter(n => n !== name);
+  Object.keys(ROLE_DEFAULT_ASSIGNEE).forEach(role => {
+    const list = getRoleDefaultAssignees(role);
+    if(list.includes(name)) ROLE_DEFAULT_ASSIGNEE[role] = list.filter(n => n !== name);
+  });
+  saveAppState(); renderRoleAssigneesPicker();
 }
 function renderDefaultAssigneesPanel(){
   const host = document.getElementById('defaultAssigneesPanel');
@@ -5304,7 +5400,7 @@ function openPhaseChecklistModal(projectId, phaseN){
       <td class="name-cell">${escapeHtmlLite(def.title)}</td>
       <td style="font-size:11px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
       <td><span class="pill ${statusClass[st.status]||'pill-ink'}">${st.status}${st.status==='In Revision' && st.revisionRounds ? ' · R' + st.revisionRounds : ''}</span></td>
-      <td><select style="min-width:140px;" onchange="setStepFieldForPhase('${p.id}',${phaseN},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></td>
+      <td><select style="min-width:140px;" onchange="setStepFieldForPhase('${p.id}',${phaseN},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
       <td><input type="number" min="1" value="${days}" style="max-width:56px; text-align:center;" onchange="setStepDaysForPhase('${p.id}',${phaseN},'${def.id}',this.value); openPhaseChecklistModal('${p.id}',${phaseN}); renderProjectDetail();"></td>
       <td style="font-size:12px; color:var(--ink-faint);">${st.due ? fmtNoteDate(st.due) : '—'}</td>
     </tr>`;
@@ -5464,7 +5560,7 @@ function buildManualScheduleBuilderHTML(p){
         <td>${i+1}</td>
         <td class="name-cell">${escapeHtmlLite(def.title)}</td>
         <td style="font-size:11px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
-        <td><select style="min-width:150px;" onchange="setStepFieldForPhase('${p.id}',${ph.n},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></td>
+        <td><select style="min-width:150px;" onchange="setStepFieldForPhase('${p.id}',${ph.n},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
         <td><input type="number" min="1" value="${days}" style="max-width:64px; text-align:center;" title="Business days for this step — starts from Company Settings' default, adjust here for just this project" onchange="setStepProjectDays('${p.id}',${ph.n},'${def.id}',this.value)"></td>
         <td style="font-size:12px; color:var(--ink-faint);">${fmtNoteDate(computed[def.id])}</td>
       </tr>`;
@@ -5962,7 +6058,7 @@ function buildHeroInnerHTML(p){
     <div class="hero-meta">${escapeHtmlLite(def.role)}${isBlocked && a.blockerNote ? ` — Blocked: ${escapeHtmlLite(a.blockerNote)}${a.blockedParty ? ` · ${escapeHtmlLite(a.blockedParty)}` : ''}` : ''}</div>
     ${def.needsMeeting ? `<div class="hero-meeting-banner"><span class="emoji">📅</span> Meeting needed — ${escapeHtmlLite((def.meetingWith && def.meetingWith.length) ? def.meetingWith.join(', ') : 'attendees not yet set')}</div>` : ''}
     <div class="hero-row">
-      <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></div>
+      <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></div>
       ${a.baselineDue ? `<div><label>Baseline Was</label><div style="font-size:13px; color:var(--ink-faint); padding-top:8px;">${fmtNoteDate(a.baselineDue)}</div></div>` : ''}
     </div>
     ${buildHeroNotesHTML(p, def.id, a.heroNote)}
@@ -6090,7 +6186,7 @@ function buildFullActionListHTML(p){
           <td class="name-cell">${escapeHtmlLite(def.title)}</td>
           <td style="font-size:11.5px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
           <td><span class="pill ${statusClass[a.status]||'pill-ink'}">${a.status}${a.status==='In Revision' && a.revisionRounds ? ' · R' + a.revisionRounds : ''}</span></td>
-          <td><select style="min-width:150px;" onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || ROLE_DEFAULT_ASSIGNEE[def.role])}</select></td>
+          <td><select style="min-width:150px;" onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
           <td><input type="number" min="1" value="${days}" style="max-width:60px; text-align:center;" title="Business days for this step" onchange="setStepDaysCurrentPhase('${p.id}','${def.id}',this.value)"></td>
           <td style="font-size:12px; color:var(--ink-faint);">${a.due ? fmtNoteDate(a.due) : '—'}</td>
         </tr>`;
@@ -6867,19 +6963,28 @@ function openClientProgressLinkModal(projectId){
 // Company Settings, shown to the client under their schedule instead of the internal
 // task checklist — gives context without exposing how the sausage gets made. ----
 let PHASE_DESCRIPTIONS = {
-  3: 'We\u2019re gathering everything that makes this house yours — your must-haves, your style, how you actually live day to day.',
-  4: 'Your architect is turning that vision into real, buildable drawings.',
-  5: 'You\u2019re choosing the finishes, fixtures, and materials that bring the design to life.',
-  6: 'We\u2019re producing 3D renderings so you can see the design before a single wall goes up.',
-  7: 'We\u2019re pricing every trade and finalizing the real construction budget.',
-  8: 'Final contract details and paperwork before we break ground.',
+  1: 'We\u2019re gathering everything that makes this house yours — your must-haves, your style, how you actually live day to day.',
+  2: 'Your architect is turning that vision into real, buildable drawings.',
+  3: 'You\u2019re choosing the finishes, fixtures, and materials that bring the design to life.',
+  4: 'We\u2019re producing 3D renderings so you can see the design before a single wall goes up.',
+  5: 'We\u2019re pricing every trade and finalizing the real construction budget.',
+  6: 'Final contract details and paperwork before we break ground.',
 };
 function buildClientPhaseDescriptionsHTML(){
+  const phases = PROCESS_PHASES.filter(ph => PHASE_DESCRIPTIONS[ph.n]);
+  if(!phases.length) return '';
   return `
     <div class="section-label-row"><div class="eyebrow">What Each Phase Means</div></div>
-    <div class="panel" style="margin-bottom:24px;"><div class="panel-body" style="padding:6px 20px;">
-      ${PROCESS_PHASES.map(ph => `<div class="list-row"><div><div class="main-txt">Phase ${ph.n} · ${escapeHtmlLite(ph.name)}</div>${PHASE_DESCRIPTIONS[ph.n] ? `<div class="sub-txt" style="margin-top:3px; max-width:640px;">${escapeHtmlLite(PHASE_DESCRIPTIONS[ph.n])}</div>` : ''}</div></div>`).join('')}
-    </div></div>`;
+    <div class="phase-meaning-grid" style="margin-bottom:24px;">
+      ${phases.map(ph => {
+        const color = PRECON_PHASE_COLORS[ph.n] || 'var(--taupe)';
+        return `<div class="phase-meaning-card" style="border-top-color:${color};">
+          <div class="phase-meaning-badge" style="background:${color};">${ph.n}</div>
+          <div class="phase-meaning-name">${escapeHtmlLite(ph.name)}</div>
+          <div class="phase-meaning-desc">${escapeHtmlLite(PHASE_DESCRIPTIONS[ph.n])}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 function buildClientProgressScheduleHTML(project){
   const wf = ensureWorkflowModel(project);
@@ -6950,8 +7055,6 @@ function buildClientViewTabBarHTML(){
 // screenshot. Full schedule/plans/markup still need the link, since those need JS to work. ----
 function buildEmailSummaryHTML(p){
   const currentPhaseDef = phaseDef(p.currentPhase);
-  const dPhase = daysInPhase(p);
-  const dPrecon = daysInPreconstruction(p);
   const latestUpdate = (p.clientLogs || []).slice(-1)[0];
   const url = baseAppUrl() + '?client_project=' + encodeURIComponent(p.id);
   const statusLine = p.currentPhase !== null
@@ -6964,12 +7067,6 @@ function buildEmailSummaryHTML(p){
     <div style="font-size:22px; font-weight:bold; color:#231F16; margin-top:4px;">${escapeHtmlLite(p.name)}</div>
     <div style="font-size:13px; color:#54503f; margin-top:4px;">${escapeHtmlLite(p.client || '')}${p.location ? ' &middot; ' + escapeHtmlLite(p.location) : ''}</div>
     <div style="font-size:14px; font-weight:bold; color:#231F16; margin-top:10px;">${statusLine}</div>
-  </td></tr>
-  <tr><td style="padding:14px 28px 4px 28px;">
-    <table cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr>
-      ${dPhase !== null ? `<td style="width:50%; padding:6px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #E3DDCF; border-radius:6px;"><tr><td style="padding:14px; text-align:center;"><div style="font-size:24px; font-weight:bold; color:#231F16;">${dPhase}</div><div style="font-size:10px; letter-spacing:0.5px; text-transform:uppercase; color:#8a8272;">Days in This Phase</div></td></tr></table></td>` : ''}
-      ${dPrecon !== null ? `<td style="width:50%; padding:6px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #E3DDCF; border-radius:6px;"><tr><td style="padding:14px; text-align:center;"><div style="font-size:24px; font-weight:bold; color:#231F16;">${dPrecon}</div><div style="font-size:10px; letter-spacing:0.5px; text-transform:uppercase; color:#8a8272;">Days in Preconstruction</div></td></tr></table></td>` : ''}
-    </tr></table>
   </td></tr>
   ${latestUpdate ? `<tr><td style="padding:6px 28px 4px 28px;">
     <table cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #E3DDCF; border-radius:6px;"><tr><td style="padding:14px 16px;">
@@ -9180,7 +9277,7 @@ function buildAppSnapshot(){
     DEFAULT_TASK_ASSIGNEES, COMPANY_TEMPLATES, COMPANY_LOGO, COMPANY_LOGO_SIZE, CONTACTS,
     DRIP_CAMPAIGN_CONNECTION, PHASE_DESCRIPTIONS,
     PROCESS_PHASES, ROLE_DEFAULT_ASSIGNEE, PROJECT_FILE_CATEGORIES, PLAN_DRAWING_CATEGORIES,
-    MEETING_ATTENDEE_OPTIONS, PHASE_NUMBERING_MIGRATED, WORKFLOW_PHASE_DEFS,
+    MEETING_ATTENDEE_OPTIONS, PHASE_NUMBERING_MIGRATED, WORKFLOW_PHASE_DEFS, EXTERNAL_CONTACTS,
     themeVars: captureThemeVars(),
   };
 }
@@ -9208,6 +9305,7 @@ function applyAppSnapshot(snap){
   if(snap.PROJECT_FILE_CATEGORIES) PROJECT_FILE_CATEGORIES = snap.PROJECT_FILE_CATEGORIES;
   if(snap.PLAN_DRAWING_CATEGORIES) PLAN_DRAWING_CATEGORIES = snap.PLAN_DRAWING_CATEGORIES;
   if(snap.MEETING_ATTENDEE_OPTIONS) MEETING_ATTENDEE_OPTIONS = snap.MEETING_ATTENDEE_OPTIONS;
+  if(snap.EXTERNAL_CONTACTS) EXTERNAL_CONTACTS = snap.EXTERNAL_CONTACTS;
   if(snap.PHASE_NUMBERING_MIGRATED) PHASE_NUMBERING_MIGRATED = snap.PHASE_NUMBERING_MIGRATED;
   if(Array.isArray(snap.WORKFLOW_PHASE_DEFS)){ WORKFLOW_PHASE_DEFS.length = 0; WORKFLOW_PHASE_DEFS.push(...snap.WORKFLOW_PHASE_DEFS); }
   if(snap.themeVars) applyThemeVars(snap.themeVars);
