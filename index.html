@@ -4734,6 +4734,15 @@ function getRoleDefaultAssignees(role){
 function getPrimaryRoleDefaultAssignee(role){
   return getRoleDefaultAssignees(role)[0] || '';
 }
+// ---- What a step's "Assigned To" should actually show: the live Company Settings default
+// for its role, UNLESS this specific step was explicitly given a different person by hand
+// (st.ownerOverridden). Without this, a role default set once and never touched again would
+// silently go stale on every project already using it the moment Company Settings changes —
+// the exact mismatch between "Company Settings says X" and "the project still shows Y" this
+// was built to close. A real per-step override still always wins. ----
+function resolveStepOwner(st, role){
+  return st.ownerOverridden ? (st.owner || '') : getPrimaryRoleDefaultAssignee(role);
+}
 function assignablePeopleList(){
   return [...TEAM_MEMBERS, ...EXTERNAL_CONTACTS];
 }
@@ -5341,6 +5350,7 @@ function setStepField(projectId, stepId, field, val){
   const stage = wf.stages.find(s => s.n === wf.currentStageN);
   const st = getStepState(stage, stepId);
   st[field] = val || null;
+  if(field === 'owner') st.ownerOverridden = true;
   if(field === 'due'){
     if(val) st.forecastDue = val; // editing the visible due date IS editing the schedule
     recalcStageFinishFromSteps(p, wf.currentStageN);
@@ -5358,6 +5368,7 @@ function setStepFieldForPhase(projectId, phaseN, stepId, field, val){
   const stage = wf.stages.find(s => s.n === phaseN);
   const st = getStepState(stage, stepId);
   st[field] = val || null;
+  if(field === 'owner') st.ownerOverridden = true;
   if(field === 'due'){
     if(val) st.forecastDue = val;
     recalcStageFinishFromSteps(p, phaseN); // harmless no-op pre-baseline; cascades downstream once one exists
@@ -5399,7 +5410,7 @@ function openPhaseChecklistModal(projectId, phaseN){
       <td class="name-cell">${escapeHtmlLite(def.title)}</td>
       <td style="font-size:11px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
       <td><span class="pill ${statusClass[st.status]||'pill-ink'}">${st.status}${st.status==='In Revision' && st.revisionRounds ? ' · R' + st.revisionRounds : ''}</span></td>
-      <td><select style="min-width:140px;" onchange="setStepFieldForPhase('${p.id}',${phaseN},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
+      <td><select style="min-width:140px;" onchange="setStepFieldForPhase('${p.id}',${phaseN},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, resolveStepOwner(st, def.role))}</select></td>
       <td><input type="number" min="1" value="${days}" style="max-width:56px; text-align:center;" onchange="setStepDaysForPhase('${p.id}',${phaseN},'${def.id}',this.value); openPhaseChecklistModal('${p.id}',${phaseN}); renderProjectDetail();"></td>
       <td style="font-size:12px; color:var(--ink-faint);">${st.due ? fmtNoteDate(st.due) : '—'}</td>
     </tr>`;
@@ -5559,7 +5570,7 @@ function buildManualScheduleBuilderHTML(p){
         <td>${i+1}</td>
         <td class="name-cell">${escapeHtmlLite(def.title)}</td>
         <td style="font-size:11px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
-        <td><select style="min-width:150px;" onchange="setStepFieldForPhase('${p.id}',${ph.n},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, st.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
+        <td><select style="min-width:150px;" onchange="setStepFieldForPhase('${p.id}',${ph.n},'${def.id}','owner',this.value)">${stepOwnerOptions(def.role, resolveStepOwner(st, def.role))}</select></td>
         <td><input type="number" min="1" value="${days}" style="max-width:64px; text-align:center;" title="Business days for this step — starts from Company Settings' default, adjust here for just this project" onchange="setStepProjectDays('${p.id}',${ph.n},'${def.id}',this.value)"></td>
         <td style="font-size:12px; color:var(--ink-faint);">${fmtNoteDate(computed[def.id])}</td>
       </tr>`;
@@ -6099,7 +6110,7 @@ function buildHeroInnerHTML(p){
     <div class="hero-meta">${escapeHtmlLite(def.role)}${isBlocked && a.blockerNote ? ` — Blocked: ${escapeHtmlLite(a.blockerNote)}${a.blockedParty ? ` · ${escapeHtmlLite(a.blockedParty)}` : ''}` : ''}</div>
     ${def.needsMeeting ? `<div class="hero-meeting-banner"><span class="emoji">📅</span> Meeting needed — ${escapeHtmlLite((def.meetingWith && def.meetingWith.length) ? def.meetingWith.join(', ') : 'attendees not yet set')}</div>` : ''}
     <div class="hero-row">
-      <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></div>
+      <div><label>Assigned To</label><select onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, resolveStepOwner(a, def.role))}</select></div>
       ${a.baselineDue ? `<div><label>Baseline Was</label><div style="font-size:13px; color:var(--ink-faint); padding-top:8px;">${fmtNoteDate(a.baselineDue)}</div></div>` : ''}
     </div>
     ${buildHeroNotesHTML(p, def.id)}
@@ -6227,7 +6238,7 @@ function buildFullActionListHTML(p){
           <td class="name-cell">${escapeHtmlLite(def.title)}</td>
           <td style="font-size:11.5px; color:var(--ink-faint);">${escapeHtmlLite(def.role)}</td>
           <td><span class="pill ${statusClass[a.status]||'pill-ink'}">${a.status}${a.status==='In Revision' && a.revisionRounds ? ' · R' + a.revisionRounds : ''}</span></td>
-          <td><select style="min-width:150px;" onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, a.owner || getPrimaryRoleDefaultAssignee(def.role))}</select></td>
+          <td><select style="min-width:150px;" onchange="setStepField('${p.id}','${def.id}','owner',this.value)">${stepOwnerOptions(def.role, resolveStepOwner(a, def.role))}</select></td>
           <td><input type="number" min="1" value="${days}" style="max-width:60px; text-align:center;" title="Business days for this step" onchange="setStepDaysCurrentPhase('${p.id}','${def.id}',this.value)"></td>
           <td style="font-size:12px; color:var(--ink-faint);">${a.due ? fmtNoteDate(a.due) : '—'}</td>
         </tr>`;
