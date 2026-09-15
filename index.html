@@ -9429,6 +9429,19 @@ const CLOUD_STATE_KEY = 'main';
 // could vanish without anyone doing anything wrong. When that's detected, this browser pulls
 // their newer data in instead of overwriting it, and simply retries its own save next cycle. ----
 let LAST_KNOWN_REMOTE_UPDATED_AT = null;
+// ---- Postgres doesn't necessarily echo back a timestamp in the exact string form it was
+// sent in (fractional-second precision and the timezone suffix can both come back reformatted
+// even when the underlying instant is identical). Comparing those strings directly caused a
+// false "someone else just saved this" reading on a browser's OWN just-completed save — which
+// made saveAppState() panic, discard the change that was just made (an uploaded file, in one
+// real case), and pull back the pre-save data instead. Parsing both sides to milliseconds
+// before comparing removes that false positive entirely. ----
+function sameTimestamp(a, b){
+  if(!a || !b) return a === b;
+  const ta = Date.parse(a), tb = Date.parse(b);
+  if(Number.isNaN(ta) || Number.isNaN(tb)) return a === b;
+  return ta === tb;
+}
 async function saveAppState(){
   const savedAtMs = Date.now();
   const snapshot = buildAppSnapshot();
@@ -9441,10 +9454,11 @@ async function saveAppState(){
     if(LAST_KNOWN_REMOTE_UPDATED_AT){
       const { data: currentRow, error: checkErr } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', CLOUD_STATE_KEY).maybeSingle();
       if(checkErr) throw checkErr;
-      if(currentRow && currentRow.updated_at && currentRow.updated_at !== LAST_KNOWN_REMOTE_UPDATED_AT){
-        // A teammate saved something after this browser last looked — pull it in rather than
-        // overwriting it. This save cycle is skipped; the normal 15-second autosave picks this
-        // browser's own pending changes back up on the next tick, now based on their update.
+      if(currentRow && currentRow.updated_at && !sameTimestamp(currentRow.updated_at, LAST_KNOWN_REMOTE_UPDATED_AT)){
+        // A teammate genuinely saved something after this browser last looked — pull it in
+        // rather than overwriting it. This save cycle is skipped; the normal 15-second
+        // autosave picks this browser's own pending changes back up on the next tick, now
+        // layered on top of their update instead of blind to it.
         applyAppSnapshot(currentRow.value);
         LAST_KNOWN_REMOTE_UPDATED_AT = currentRow.updated_at;
         try{ localStorage.setItem(APP_STATE_KEY, JSON.stringify(currentRow.value)); } catch(e2){}
@@ -9453,9 +9467,13 @@ async function saveAppState(){
         return;
       }
     }
-    const { error } = await supabaseClient.from('app_state').upsert({ key: CLOUD_STATE_KEY, value: snapshot, updated_at: new Date(savedAtMs).toISOString() });
+    // .select() chained onto the upsert reads back the row exactly as Postgres actually
+    // stored it — used as the new LAST_KNOWN_REMOTE_UPDATED_AT instead of the timestamp this
+    // browser sent, so every future comparison is server-string-vs-server-string and can
+    // never mismatch on formatting alone.
+    const { data: savedRow, error } = await supabaseClient.from('app_state').upsert({ key: CLOUD_STATE_KEY, value: snapshot, updated_at: new Date(savedAtMs).toISOString() }).select('updated_at').maybeSingle();
     if(error) throw error;
-    LAST_KNOWN_REMOTE_UPDATED_AT = new Date(savedAtMs).toISOString();
+    LAST_KNOWN_REMOTE_UPDATED_AT = (savedRow && savedRow.updated_at) || new Date(savedAtMs).toISOString();
     setSyncIndicator('Saved ' + new Date(savedAtMs).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}));
   } catch(e){
     console.warn('Cloud save failed, kept in local cache:', e);
@@ -9473,7 +9491,7 @@ async function pollForRemoteUpdates(){
   try{
     const { data, error } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', CLOUD_STATE_KEY).maybeSingle();
     if(error || !data || !data.updated_at) return;
-    if(data.updated_at === LAST_KNOWN_REMOTE_UPDATED_AT) return;
+    if(sameTimestamp(data.updated_at, LAST_KNOWN_REMOTE_UPDATED_AT)) return;
     applyAppSnapshot(data.value);
     LAST_KNOWN_REMOTE_UPDATED_AT = data.updated_at;
     try{ localStorage.setItem(APP_STATE_KEY, JSON.stringify(data.value)); } catch(e){}
