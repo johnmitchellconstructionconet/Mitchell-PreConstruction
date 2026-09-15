@@ -9420,6 +9420,15 @@ function showSyncErrorBanner(text){
 // conflict resolution. localStorage is kept as a fast local cache and an offline fallback if
 // the network or Supabase is briefly unavailable — not as the source of truth once signed in. ----
 const CLOUD_STATE_KEY = 'main';
+// ---- The timestamp of whatever Supabase snapshot this browser last actually applied —
+// either from its own load or a teammate's newer save picked up mid-session. Every save
+// checks the server's current updated_at against this before overwriting: if someone else
+// has saved something newer since this browser last looked (a file upload, a note, anything),
+// this browser's own blind 15-second autosave interval would otherwise silently overwrite
+// their change with this browser's stale in-memory copy — exactly how one teammate's upload
+// could vanish without anyone doing anything wrong. When that's detected, this browser pulls
+// their newer data in instead of overwriting it, and simply retries its own save next cycle. ----
+let LAST_KNOWN_REMOTE_UPDATED_AT = null;
 async function saveAppState(){
   const savedAtMs = Date.now();
   const snapshot = buildAppSnapshot();
@@ -9429,8 +9438,24 @@ async function saveAppState(){
     return;
   }
   try{
+    if(LAST_KNOWN_REMOTE_UPDATED_AT){
+      const { data: currentRow, error: checkErr } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', CLOUD_STATE_KEY).maybeSingle();
+      if(checkErr) throw checkErr;
+      if(currentRow && currentRow.updated_at && currentRow.updated_at !== LAST_KNOWN_REMOTE_UPDATED_AT){
+        // A teammate saved something after this browser last looked — pull it in rather than
+        // overwriting it. This save cycle is skipped; the normal 15-second autosave picks this
+        // browser's own pending changes back up on the next tick, now based on their update.
+        applyAppSnapshot(currentRow.value);
+        LAST_KNOWN_REMOTE_UPDATED_AT = currentRow.updated_at;
+        try{ localStorage.setItem(APP_STATE_KEY, JSON.stringify(currentRow.value)); } catch(e2){}
+        renderEverything();
+        setSyncIndicator('Updated by a teammate — refreshed just now');
+        return;
+      }
+    }
     const { error } = await supabaseClient.from('app_state').upsert({ key: CLOUD_STATE_KEY, value: snapshot, updated_at: new Date(savedAtMs).toISOString() });
     if(error) throw error;
+    LAST_KNOWN_REMOTE_UPDATED_AT = new Date(savedAtMs).toISOString();
     setSyncIndicator('Saved ' + new Date(savedAtMs).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}));
   } catch(e){
     console.warn('Cloud save failed, kept in local cache:', e);
@@ -9438,13 +9463,33 @@ async function saveAppState(){
     showSyncErrorBanner('Could not save to Supabase — your last change is only saved on this computer for now. (' + (e && e.message || e) + ')');
   }
 }
+// ---- Checked every 20 seconds so a teammate's upload, note, or edit shows up here on its
+// own — nobody should have to remember to manually refresh the page to see what someone else
+// just did. Skipped while a field is focused or a meeting-note draft is uncommitted, same
+// guard renderEverything() already uses, so this never yanks a value out from under someone
+// mid-edit; it applies as soon as they're done. ----
+async function pollForRemoteUpdates(){
+  if(!SUPABASE_CONFIGURED || !supabaseClient || !LAST_KNOWN_REMOTE_UPDATED_AT) return;
+  try{
+    const { data, error } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', CLOUD_STATE_KEY).maybeSingle();
+    if(error || !data || !data.updated_at) return;
+    if(data.updated_at === LAST_KNOWN_REMOTE_UPDATED_AT) return;
+    applyAppSnapshot(data.value);
+    LAST_KNOWN_REMOTE_UPDATED_AT = data.updated_at;
+    try{ localStorage.setItem(APP_STATE_KEY, JSON.stringify(data.value)); } catch(e){}
+    renderEverything();
+    setSyncIndicator('Updated by a teammate — refreshed just now');
+  } catch(e){ console.warn('Background sync check failed:', e); }
+}
+setInterval(pollForRemoteUpdates, 20000);
 async function loadAppState(){
   if(SUPABASE_CONFIGURED && supabaseClient){
     try{
-      const { data, error } = await supabaseClient.from('app_state').select('value').eq('key', CLOUD_STATE_KEY).maybeSingle();
+      const { data, error } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', CLOUD_STATE_KEY).maybeSingle();
       if(error) throw error;
       if(data && data.value){
         applyAppSnapshot(data.value);
+        LAST_KNOWN_REMOTE_UPDATED_AT = data.updated_at || null;
         try{ localStorage.setItem(APP_STATE_KEY, JSON.stringify(data.value)); } catch(e){}
         setSyncIndicator('Loaded from Supabase');
         return 'cloud';
