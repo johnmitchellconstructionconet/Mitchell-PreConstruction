@@ -1608,6 +1608,7 @@ function openAddInspirationPhoto(oppId){
       uploadedBy: CURRENT_LOGGED_IN_USER,
     });
     overlay.remove();
+    saveAppState();
     renderProjectDetail();
   };
 }
@@ -1647,6 +1648,7 @@ async function deleteInspirationPhoto(oppId, photoId){
   const est = OPP_ESTIMATES[oppId];
   if(est) est.inspirationPhotos = (est.inspirationPhotos || []).filter(p => p.id !== photoId);
   closeInspirationLightbox();
+  saveAppState();
   renderProjectDetail();
 }
 function stageIndex(stage){ return STAGE_ORDER.indexOf(stage); }
@@ -3439,6 +3441,7 @@ async function uploadDocToSlot(oppId, key, input){
   if(!est.uploadedDocs) est.uploadedDocs = {};
   const dataUrl = await readFileAsDataUrl(file);
   est.uploadedDocs[key] = { name: file.name, dataUrl, uploadedAt: new Date().toISOString().slice(0,10) };
+  saveAppState();
   const oppOverlay = document.getElementById('oppOverlay');
   if(oppOverlay && oppOverlay.style.display === 'flex'){ const opp = getOpp(oppId); if(opp) oppOverlay.innerHTML = buildOppDetailHTML(opp); }
   else renderProjectDetail();
@@ -3447,6 +3450,7 @@ async function removeUploadedDoc(oppId, key){
   if(!await customConfirm('Remove this file?')) return;
   const est = OPP_ESTIMATES[oppId];
   if(est && est.uploadedDocs) delete est.uploadedDocs[key];
+  saveAppState();
   const oppOverlay = document.getElementById('oppOverlay');
   if(oppOverlay && oppOverlay.style.display === 'flex'){ const opp = getOpp(oppId); if(opp) oppOverlay.innerHTML = buildOppDetailHTML(opp); }
   else renderProjectDetail();
@@ -3459,6 +3463,7 @@ async function uploadOppAttachment(oppId, input){
   if(!est.attachments) est.attachments = [];
   const dataUrl = await readFileAsDataUrl(file);
   est.attachments.push({ id:'att'+Date.now(), name:file.name, dataUrl, uploadedAt: new Date().toISOString().slice(0,10) });
+  saveAppState();
   const oppOverlay = document.getElementById('oppOverlay');
   if(oppOverlay && oppOverlay.style.display === 'flex'){ const opp = getOpp(oppId); if(opp) oppOverlay.innerHTML = buildOppDetailHTML(opp); }
   else renderProjectDetail();
@@ -3468,6 +3473,7 @@ async function deleteOppAttachment(oppId, attId){
   const est = OPP_ESTIMATES[oppId];
   if(!est) return;
   est.attachments = (est.attachments || []).filter(a => a.id !== attId);
+  saveAppState();
   const oppOverlay = document.getElementById('oppOverlay');
   if(oppOverlay && oppOverlay.style.display === 'flex'){ const opp = getOpp(oppId); if(opp) oppOverlay.innerHTML = buildOppDetailHTML(opp); }
   else renderProjectDetail();
@@ -3706,6 +3712,7 @@ async function submitProjectMeetingNote(oppId){
     newNote.attachmentName = file.name;
   }
   est.meetingNotes.push(newNote);
+  saveAppState();
   closeQuickOverlay();
   renderProjectDetail();
 }
@@ -3911,12 +3918,17 @@ function escapeHtmlLite(s){
 // clicking a file behaves the way people expect from a normal app. Anything else (rare,
 // since uploads are restricted to PDF/image) falls back to a new tab, since there's no
 // way to render an arbitrary file type inline. ----
+// ---- Previously, anything that didn't strictly match a .pdf/.jpg-style file extension (a
+// custom title without an extension, an uncommon MIME string a browser reported for a PDF,
+// etc.) fell through to window.open(dataUrl) in a new tab — which browsers routinely treat
+// as a forced download for a data: URL they don't fully recognize, rather than displaying
+// it. Everything that isn't clearly an image now goes through the same iframe overlay PDFs
+// use, which renders reliably off the data URL's own embedded MIME type regardless of what
+// the file's name or title happens to be. ----
 function openFilePreview(dataUrl, name){
   if(!dataUrl){ alert('No file to show.'); return; }
   const lower = (name || '').toLowerCase();
   const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(lower) || dataUrl.startsWith('data:image/');
-  const isPdf = /\.pdf$/.test(lower) || dataUrl.startsWith('data:application/pdf');
-  if(!isImage && !isPdf){ window.open(dataUrl, '_blank'); return; }
   document.getElementById('filePreviewOverlay')?.remove();
   const overlay = document.createElement('div');
   overlay.id = 'filePreviewOverlay';
@@ -4291,6 +4303,7 @@ async function submitMeetingNote(oppId){
   }
   ESTIMATE.meetingNotes.push(newNote);
   logActivity('Meeting', `${type} notes added`, 'You');
+  saveAppState();
   closeQuickOverlay();
   const opp = getOpp(oppId);
   const oppOverlay = document.getElementById('oppOverlay');
@@ -4299,6 +4312,7 @@ async function submitMeetingNote(oppId){
 async function deleteMeetingNote(oppId, noteId){
   if(!await customConfirm('Delete this meeting note?')) return;
   ESTIMATE.meetingNotes = ESTIMATE.meetingNotes.filter(n => n.id !== noteId);
+  saveAppState();
   const opp = getOpp(oppId);
   const oppOverlay = document.getElementById('oppOverlay');
   if(oppOverlay && opp) oppOverlay.innerHTML = buildOppDetailHTML(opp);
