@@ -1058,6 +1058,9 @@ select{cursor:pointer;}
           <button class="btn btn-outline" style="margin-left:auto;" onclick="resetToDemoData()">Clear Saved Data &amp; Reset to Demo</button>
         </div>
       </div></div>
+      <div class="section-label-row"><div class="eyebrow">Emergency Backups</div></div>
+      <div class="hint" style="margin-bottom:12px;">A snapshot is kept automatically, roughly once an hour, going back about a day — separate from the live save, so a bad sync or an accidental overwrite is always recoverable from here. Restoring replaces everything currently saved for the whole team.</div>
+      <div id="backupsPanel" class="panel" style="margin-bottom:28px;"></div>
       <div class="section-label-row"><div class="eyebrow">Preconstruction Process</div></div>
       <div class="hint" style="margin-bottom:12px;">The exact phases and steps every project runs through, in order — this drives the Next Required Action on every project's Overview tab. Edit titles, reassign roles, reorder, add, or remove steps here whenever the real process changes; nothing about the process is hardcoded.</div>
       <div id="processEditorPanel" class="panel" style="margin-bottom:16px;"></div>
@@ -9434,6 +9437,72 @@ function showSyncErrorBanner(text){
 // conflict resolution. localStorage is kept as a fast local cache and an offline fallback if
 // the network or Supabase is briefly unavailable — not as the source of truth once signed in. ----
 const CLOUD_STATE_KEY = 'main';
+// ---- 24 rotating backup slots — this is the actual undo history the app never had. Every
+// successful save advances a round-robin counter and writes into the NEXT slot, never the
+// same one twice in a row — critically, this means a bad save can never immediately
+// overwrite the good backup from the save right before it, which an hour-of-day bucket would
+// have allowed (two saves close together landing in the same hour). Persisted in
+// localStorage per browser, so this browser's own save sequence never collides with itself;
+// worst case across different browsers is losing one slot's worth of history, not all of it,
+// since 24 of them are spread around. This is a genuinely separate row per slot (never the
+// live 'main' row), so nothing here is at risk from the same bug that could ever affect the
+// live state again — the last ~24 saves are always restorable regardless. ----
+const BACKUP_SLOT_COUNT = 24;
+let BACKUP_ROTATION_INDEX = (function(){
+  try{ return parseInt(localStorage.getItem('backupRotationIndex') || '0', 10) || 0; } catch(e){ return 0; }
+})();
+function nextBackupSlotKey(){
+  BACKUP_ROTATION_INDEX = (BACKUP_ROTATION_INDEX + 1) % BACKUP_SLOT_COUNT;
+  try{ localStorage.setItem('backupRotationIndex', String(BACKUP_ROTATION_INDEX)); } catch(e){}
+  return 'backup_slot_' + BACKUP_ROTATION_INDEX;
+}
+async function writeBackupSlot(snapshot, savedAtMs){
+  if(!SUPABASE_CONFIGURED || !supabaseClient) return;
+  try{
+    await supabaseClient.from('app_state').upsert({ key: nextBackupSlotKey(), value: snapshot, updated_at: new Date(savedAtMs).toISOString() });
+  } catch(e){ console.warn('Backup slot write failed (non-fatal):', e); }
+}
+async function listBackupSlots(){
+  if(!SUPABASE_CONFIGURED || !supabaseClient) return [];
+  try{
+    const { data, error } = await supabaseClient.from('app_state').select('key, updated_at').like('key', 'backup_slot_%');
+    if(error) throw error;
+    return (data || []).sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
+  } catch(e){ console.warn('Listing backups failed:', e); return []; }
+}
+async function restoreFromBackupSlot(key){
+  if(!await customConfirm('Restore this backup? Everything currently saved — anything added or changed since this backup was written — will be replaced with what\'s in it. This can\'t be undone.')) return;
+  try{
+    const { data, error } = await supabaseClient.from('app_state').select('value, updated_at').eq('key', key).maybeSingle();
+    if(error || !data) throw (error || new Error('Backup not found'));
+    applyAppSnapshot(data.value);
+    await saveAppState(); // writes the restored state back as the live 'main' row immediately
+    renderEverything();
+    alert('Restored. This is now the live, saved state for everyone.');
+  } catch(e){
+    alert('Could not restore this backup: ' + (e && e.message || e));
+  }
+}
+async function renderBackupsPanel(){
+  const host = document.getElementById('backupsPanel');
+  if(!host) return;
+  if(!SUPABASE_CONFIGURED || !supabaseClient){
+    host.innerHTML = `<div class="panel-body" style="padding:16px 20px;"><div class="empty-row">Backups need Supabase connected — running locally only right now.</div></div>`;
+    return;
+  }
+  host.innerHTML = `<div class="panel-body" style="padding:16px 20px;"><div class="empty-row">Loading backups…</div></div>`;
+  const slots = await listBackupSlots();
+  if(!slots.length){
+    host.innerHTML = `<div class="panel-body" style="padding:16px 20px;"><div class="empty-row">No backups yet — the first one is written on the next save.</div></div>`;
+    return;
+  }
+  host.innerHTML = `<div class="panel-body" style="padding:6px 20px;">
+    ${slots.map(s => `<div class="list-row">
+      <span class="main-txt" style="font-size:13px;">${new Date(s.updated_at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>
+      <button class="btn btn-outline btn-sm" onclick="restoreFromBackupSlot('${s.key}')">Restore this backup</button>
+    </div>`).join('')}
+  </div>`;
+}
 // ---- The timestamp of whatever Supabase snapshot this browser last actually applied —
 // either from its own load or a teammate's newer save picked up mid-session. Every save
 // checks the server's current updated_at against this before overwriting: if someone else
@@ -9488,6 +9557,7 @@ async function saveAppState(){
     const { data: savedRow, error } = await supabaseClient.from('app_state').upsert({ key: CLOUD_STATE_KEY, value: snapshot, updated_at: new Date(savedAtMs).toISOString() }).select('updated_at').maybeSingle();
     if(error) throw error;
     LAST_KNOWN_REMOTE_UPDATED_AT = (savedRow && savedRow.updated_at) || new Date(savedAtMs).toISOString();
+    writeBackupSlot(snapshot, savedAtMs); // fire-and-forget; never blocks or fails the actual save
     setSyncIndicator('Saved ' + new Date(savedAtMs).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}));
   } catch(e){
     console.warn('Cloud save failed, kept in local cache:', e);
@@ -9625,6 +9695,7 @@ function renderEverything(){
   renderDefaultAssigneesPanel();
   renderPhaseDescriptionsPanel();
   renderScheduleTemplatePanel();
+  renderBackupsPanel();
   if(document.getElementById('page-project-detail')?.classList.contains('active') && CURRENT_PROJECT_ID) renderProjectDetail();
 }
 (function bootApp(){
