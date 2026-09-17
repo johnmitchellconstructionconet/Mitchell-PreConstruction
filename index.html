@@ -47,7 +47,9 @@ input,select,textarea{background:#fff;border-color:#ddd9d2}
 .estimate-connect{max-width:900px}
 @media(max-width:900px){.estimate-sheet-frame{height:72vh;min-height:520px}}
 
-.meeting-setting{display:flex;flex-direction:column;gap:5px;min-width:0}.meeting-attendees-summary{border:0;background:transparent;padding:0;text-align:left;font-size:10px;line-height:1.25;color:#6f6b61;text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;white-space:normal;overflow-wrap:anywhere}.meeting-attendees-summary:hover{color:#292923}</style>
+.meeting-setting{display:flex;flex-direction:column;gap:5px;min-width:0}.meeting-attendees-summary{border:0;background:transparent;padding:0;text-align:left;font-size:10px;line-height:1.25;color:#6f6b61;text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;white-space:normal;overflow-wrap:anywhere}.meeting-attendees-summary:hover{color:#292923}
+.schedule-status-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px;background:#f7f6f3}.schedule-status-banner>div:first-child{display:flex;flex-direction:column;gap:3px}.schedule-status-banner b{font-size:14px}.schedule-status-banner span{font-size:11px;color:var(--muted);max-width:850px}.schedule-status-number{font-weight:800;font-size:22px;line-height:1;text-align:right;white-space:nowrap}.schedule-status-number small{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;margin-top:4px;font-weight:700}.schedule-behind{background:#fff4ef;border-color:#df9f86;color:#9d4a2f}.schedule-behind span{color:#875f52}.schedule-ahead{background:#f0f6f1;border-color:#9eb7a5;color:#4f7159}.schedule-on{background:#f4f4f1;border-color:#cfcfc9;color:#5b5a55}.health-behind{background:#fff7f3!important;border-color:#e1ac98!important}.health-behind strong{color:#a14f34}.health-ahead{background:#f3f8f4!important;border-color:#a8beaE!important}.health-ahead strong{color:#4f7159}
+</style>
 </head>
 <body>
 <div id="app"></div>
@@ -194,9 +196,32 @@ function phasePercent(p){if(!p.currentPhase)return 100;const arr=projectStepsFor
 function openTasks(p){return p.tasks.filter(t=>t.status!=='done').length}
 function overdueTasks(p){const t=today();return p.tasks.filter(x=>x.status!=='done'&&x.dueDate&&x.dueDate<t).length}
 function baselineReady(p){return p.baselineReady||''}
-function forecastReady(p){return p.forecastReady||p.baselineReady||''}
-function varianceLabel(p){if(!p.baselineReady)return 'No Baseline';const d=daysBetween(p.baselineReady,forecastReady(p));if(d===0)return'On Schedule';return d>0?`+${d}d behind`:`${Math.abs(d)}d ahead`}
-function recalcForecast(p){if(!p.baselineStart||!p.baselineReady)return;const remaining=p.projectSteps.filter(s=>s.status!=='done'&&s.dueDate);if(remaining.length){p.forecastReady=remaining[remaining.length-1].dueDate;}else{const completed=[...p.projectSteps].reverse().find(s=>s.completedDate);p.forecastReady=completed?.completedDate||today();}p.forecastConstructionStart=p.forecastReady;}
+function scheduleVarianceDays(p){
+ if(!p.baselineReady)return 0;
+ const active=currentStep(p);
+ // The active step is the clearest indicator of where the project actually sits versus the frozen baseline.
+ // Use the later of its forecast due date or today so an overdue unfinished step keeps accruing delay.
+ if(active&&active.baselineDate){
+  let forecastPoint=active.dueDate||active.baselineDate;
+  if(active.status!=='done'&&today()>forecastPoint)forecastPoint=today();
+  return daysBetween(active.baselineDate,forecastPoint);
+ }
+ // If preconstruction is complete, compare the actual final completion to the frozen baseline-ready date.
+ const completed=[...p.projectSteps].reverse().find(s=>s.completedDate);
+ if(completed?.completedDate)return daysBetween(p.baselineReady,completed.completedDate);
+ return 0;
+}
+function computedForecastReady(p){
+ if(!p.baselineReady)return '';
+ return iso(new Date(parseDate(p.baselineReady).getTime()+scheduleVarianceDays(p)*86400000));
+}
+function forecastReady(p){return computedForecastReady(p)||p.forecastReady||p.baselineReady||''}
+function computedForecastConstructionStart(p){
+ if(!p.targetStart)return forecastReady(p);
+ return iso(new Date(parseDate(p.targetStart).getTime()+scheduleVarianceDays(p)*86400000));
+}
+function varianceLabel(p){if(!p.baselineReady)return 'No Baseline';const d=scheduleVarianceDays(p);if(d===0)return'On Schedule';return d>0?`${d}d behind`:`${Math.abs(d)}d ahead`}
+function recalcForecast(p){if(!p.baselineStart||!p.baselineReady)return;p.forecastReady=computedForecastReady(p);p.forecastConstructionStart=computedForecastConstructionStart(p);}
 function generateBaseline(p,start=today()){let cursor=parseDate(start);p.baselineStart=iso(cursor);for(const ph of sortedPhases()){for(const ts of ph.steps){const ps=p.projectSteps.find(x=>x.templateStepId===ts.id)||p.projectSteps.find(x=>x.phaseNumber===ph.number&&x.title===ts.title);if(!ps)continue;cursor=addBusiness(cursor,ts.duration||1);ps.baselineDate=iso(cursor);if(!ps.dueDate)ps.dueDate=ps.baselineDate;}}p.baselineReady=iso(cursor);p.forecastReady=p.baselineReady;p.forecastConstructionStart=p.forecastReady;p.baselineSetDate=today();save(false)}
 function ensureProjectStepSync(p){const byTpl=new Map(p.projectSteps.map(x=>[x.templateStepId,x]));const fresh=[];for(const ph of sortedPhases()){for(const ts of ph.steps){let ps=byTpl.get(ts.id);if(!ps)ps={id:uid(),templateStepId:ts.id,phaseNumber:ph.number,title:ts.title,role:ts.role,status:'not_started',assignee:'',assigneeOverridden:false,dueDate:'',baselineDate:'',notes:[],files:[]};ps.phaseNumber=ph.number;ps.title=ts.title;ps.role=ts.role;fresh.push(ps)}}p.projectSteps=fresh;recomputeProjectPhase(p)}
 
@@ -240,7 +265,7 @@ function showBaselineModal(isReset=false){const p=currentProject();const suggest
 function applyBaselineStart(){const p=currentProject();const start=document.getElementById('baseline_start_input')?.value;if(!start)return toast('Choose the preconstruction start date.');if(p.baselineReady&&!confirm('Reset the existing baseline using this start date? This replaces the original planned dates.'))return;generateBaseline(p,start);save(false);closeModal();renderProject();toast('Baseline schedule set from '+fmt(start));}
 function generateBaselineFromToday(){showBaselineModal(!!currentProject()?.baselineReady)}
 function extendCurrentPhase(){const p=currentProject();const n=Number(prompt('How many business days should the remaining schedule be extended from the current phase forward?', '3'));if(!n)return;const idx=p.projectSteps.findIndex(x=>x.status!=='done');for(let i=Math.max(0,idx);i<p.projectSteps.length;i++){const s=p.projectSteps[i];if(s.status!=='done'&&s.dueDate)s.dueDate=iso(shiftBusiness(parseDate(s.dueDate),n));}recalcForecast(p);save(false);renderProject()}
-function scheduleHealth(p){const baseDays=p.baselineStart&&p.baselineReady?daysBetween(p.baselineStart,p.baselineReady):null;const foreDays=p.baselineStart&&forecastReady(p)?daysBetween(p.baselineStart,forecastReady(p)):null;const forecastStart=forecastReady(p);return `<div class="schedule-health"><div class="health-box"><label>Original Target Start</label><input type="date" value="${p.targetStart||''}" onchange="setProjectField('targetStart',this.value)"></div><div class="health-box"><label>Forecast Construction Start</label><strong>${fmt(forecastStart)}</strong><span class="tiny muted">Moves automatically with actual progress</span></div><div class="health-box"><label>Baseline Ready</label><strong>${fmt(p.baselineReady)}</strong></div><div class="health-box"><label>Forecast Ready</label><strong>${fmt(forecastReady(p))}</strong></div><div class="health-box"><label>Total Baseline Days</label><strong>${baseDays??'—'}</strong></div><div class="health-box"><label>Total Forecast Days</label><strong>${foreDays??'—'}</strong></div><div class="health-box"><label>Variance</label><strong>${esc(varianceLabel(p))}</strong></div></div><div class="row" style="margin-bottom:10px"><button class="btn small" onclick="extendCurrentPhase()">Extend Current Phase</button><button class="btn small danger" onclick="showBaselineModal(true)">Reset Baseline</button></div>`}
+function scheduleHealth(p){const baseDays=p.baselineStart&&p.baselineReady?daysBetween(p.baselineStart,p.baselineReady):null;const foreReady=forecastReady(p);const foreDays=p.baselineStart&&foreReady?daysBetween(p.baselineStart,foreReady):null;const variance=scheduleVarianceDays(p);const forecastStart=computedForecastConstructionStart(p);const statusClass=variance>0?'schedule-behind':variance<0?'schedule-ahead':'schedule-on';const statusText=variance>0?`Behind schedule by ${variance} day${variance===1?'':'s'}`:variance<0?`Ahead of schedule by ${Math.abs(variance)} day${Math.abs(variance)===1?'':'s'}`:'On schedule';const active=currentStep(p);const detail=variance>0&&active?`${active.title} is currently tracking later than its frozen baseline date. Remaining forecast dates and the projected construction start move with this variance.`:variance<0&&active?`${active.title} is tracking ahead of its frozen baseline. Remaining forecast dates and the projected construction start have moved forward.`:'Forecast currently matches the frozen baseline.';return `<div class="schedule-status-banner ${statusClass}"><div><b>${statusText}</b><span>${esc(detail)}</span></div><div class="schedule-status-number">${variance===0?'0':variance>0?`+${variance}`:`${variance}`}<small>days</small></div></div><div class="schedule-health"><div class="health-box"><label>Original Target Start</label><input type="date" value="${p.targetStart||''}" onchange="setProjectField('targetStart',this.value)"></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Forecast Construction Start</label><strong>${fmt(forecastStart)}</strong><span class="tiny muted">Moves automatically with schedule variance</span></div><div class="health-box"><label>Baseline Ready</label><strong>${fmt(p.baselineReady)}</strong></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Forecast Ready</label><strong>${fmt(foreReady)}</strong></div><div class="health-box"><label>Total Baseline Days</label><strong>${baseDays??'—'}</strong></div><div class="health-box"><label>Total Forecast Days</label><strong>${foreDays??'—'}</strong></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Variance</label><strong>${esc(varianceLabel(p))}</strong></div></div><div class="row" style="margin-bottom:10px"><button class="btn small" onclick="extendCurrentPhase()">Extend Current Phase</button><button class="btn small danger" onclick="showBaselineModal(true)">Reset Baseline</button></div>`}
 function scheduleBars(p){
  const phases=sortedPhases();
  const dates=[];
