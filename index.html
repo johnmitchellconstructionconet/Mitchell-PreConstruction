@@ -142,6 +142,25 @@ let booted=false;
 let legacyState=null;
 try{legacyState=JSON.parse(localStorage.getItem('align_full_v1')||'null')}catch(e){}
 function sharedPayload(){return {company:state.company,projects:state.projects};}
+function meaningfulWorkspace(x){return !!(x&&((x.projects||[]).length||(x.company?.branding?.logo||'')||(x.company?.projectContacts||[]).length));}
+function workspaceSummary(x){return `${(x?.projects||[]).length} project${(x?.projects||[]).length===1?'':'s'}${x?.company?.branding?.logo?' · logo set':''}`;}
+async function publishLocalWorkspace(force=false){
+ if(!authUser)return;
+ const source=legacyState&&meaningfulWorkspace(legacyState)?legacyState:sharedPayload();
+ if(!meaningfulWorkspace(source)){toast('No local workspace data to publish');return}
+ if(force&&!confirm(`Publish this browser's workspace (${workspaceSummary(source)}) to Supabase for the whole team? This replaces the current shared workspace.`))return;
+ setSyncStatus('saving');
+ const latest=await sb.from('align_app_state').select('version').eq('id','main').maybeSingle();
+ if(latest.error){setSyncStatus('error');alert(latest.error.message);return}
+ const next=Number(latest.data?.version||0)+1;
+ const payload={company:source.company,projects:source.projects||[]};
+ let q;
+ if(latest.data){q=await sb.from('align_app_state').update({data:payload,version:next,updated_at:new Date().toISOString(),updated_by:authUser.id}).eq('id','main').select('data,version,updated_at').single()}
+ else{q=await sb.from('align_app_state').insert({id:'main',data:payload,version:1,updated_by:authUser.id}).select('data,version,updated_at').single()}
+ if(q.error){setSyncStatus('error');alert(q.error.message);return}
+ preserveUi(q.data.data);remoteVersion=Number(q.data.version||1);state.loggedInName=loggedInDisplayName();state.lastSaved=q.data.updated_at||new Date().toISOString();localStorage.removeItem('align_full_v1');legacyState=null;setSyncStatus('live');render();toast('Shared workspace published to Supabase');
+}
+async function reloadSharedWorkspace(){setSyncStatus('saving');try{await loadSharedState();state.loggedInName=loggedInDisplayName();setSyncStatus('live');render();toast('Reloaded shared workspace')}catch(e){setSyncStatus('error');alert(e.message)}}
 function preserveUi(remote){
  const ui={currentProjectId:state.currentProjectId,view:state.view,projectTab:state.projectTab,loggedInName:state.loggedInName,lastSaved:state.lastSaved};
  state={...defaultState(),...remote,...ui};
@@ -156,18 +175,28 @@ function setSyncStatus(v){syncStatus=v;const el=document.getElementById('sync_st
 async function loadSharedState(){
  const {data,error}=await sb.from('align_app_state').select('data,version,updated_at').eq('id','main').maybeSingle();
  if(error)throw error;
+ const hasLocal=meaningfulWorkspace(legacyState);
  if(!data){
-   const seed=(legacyState&&legacyState.company)?{company:legacyState.company,projects:legacyState.projects||[]}:{company:defaultState().company,projects:[]};
-   const {data:created,error:createErr}=await sb.from('align_app_state').insert({id:'main',data:seed,version:1,updated_by:authUser.id}).select('data,version').single();
+   const seed=hasLocal?{company:legacyState.company,projects:legacyState.projects||[]}:{company:defaultState().company,projects:[]};
+   const {data:created,error:createErr}=await sb.from('align_app_state').insert({id:'main',data:seed,version:1,updated_by:authUser.id}).select('data,version,updated_at').single();
    if(createErr){
-     // Another employee may have created it between our read and insert.
-     const retry=await sb.from('align_app_state').select('data,version').eq('id','main').single();
+     const retry=await sb.from('align_app_state').select('data,version,updated_at').eq('id','main').single();
      if(retry.error)throw createErr;
-     preserveUi(retry.data.data);remoteVersion=Number(retry.data.version||1);
-   }else{preserveUi(created.data);remoteVersion=Number(created.version||1);}
- }else{preserveUi(data.data);remoteVersion=Number(data.version||1);}
+     preserveUi(retry.data.data);remoteVersion=Number(retry.data.version||1);state.lastSaved=retry.data.updated_at||'';
+   }else{preserveUi(created.data);remoteVersion=Number(created.version||1);state.lastSaved=created.updated_at||'';if(hasLocal){localStorage.removeItem('align_full_v1');legacyState=null;}}
+ }else{
+   const remote=data.data||{};
+   const remoteEmpty=!meaningfulWorkspace(remote);
+   if(remoteEmpty&&hasLocal){
+     // First real workstation wins only when the shared row is still genuinely empty.
+     const next=Number(data.version||1)+1;
+     const payload={company:legacyState.company,projects:legacyState.projects||[]};
+     const seeded=await sb.from('align_app_state').update({data:payload,version:next,updated_at:new Date().toISOString(),updated_by:authUser.id}).eq('id','main').eq('version',data.version).select('data,version,updated_at').single();
+     if(seeded.error)throw seeded.error;
+     preserveUi(seeded.data.data);remoteVersion=Number(seeded.data.version||next);state.lastSaved=seeded.data.updated_at||'';localStorage.removeItem('align_full_v1');legacyState=null;
+   }else{preserveUi(remote);remoteVersion=Number(data.version||1);state.lastSaved=data.updated_at||'';}
+ }
  state.loggedInName=loggedInDisplayName();
- localStorage.removeItem('align_full_v1');
 }
 async function flushRemoteSave(){
  if(!authUser||saveInFlight){pendingSave=true;return}
@@ -511,7 +540,7 @@ async function uploadLogo(f){if(!f)return;state.company.branding.logo=await read
 function setLogoSize(v){state.company.branding.logoSize=Number(v);save(false);renderSettings()}
 function setThemeColor(k,css,v){state.company.branding.colors=state.company.branding.colors||{};state.company.branding.colors[k]=v;document.documentElement.style.setProperty(css,v);save(false)}
 function resetTheme(){state.company.branding.colors={};save(false);location.reload()}
-function settingsStorage(){return section('storage','Data & Storage',`<div class="row between"><div><b>${state.lastSaved?'Saved '+new Date(state.lastSaved).toLocaleString():'Saved locally'}</b><div class="small muted">This prototype stores locally in this browser. Production should use per-record relational storage.</div><div class="tiny muted" style="margin-top:5px">${BUILD}</div></div><button class="btn danger" onclick="resetAllData()">Clear Saved Data & Reset to Demo</button></div>`)}
+function settingsStorage(){return section('storage','Data & Storage',`<div class="row between wrap"><div><b>${syncStatus==='live'?'Shared workspace synced':'Shared workspace status: '+syncStatus}</b><div class="small muted">Supabase is the company-wide source of truth. Every authenticated employee should load the same projects, settings, logo and tasks.</div><div class="tiny muted" style="margin-top:5px">Shared: ${workspaceSummary(sharedPayload())} · ${state.lastSaved?'Last sync '+new Date(state.lastSaved).toLocaleString():'Not synced yet'} · ${BUILD}</div></div><div class="row wrap"><button class="btn" onclick="reloadSharedWorkspace()">↻ Reload Shared Data</button>${legacyState&&meaningfulWorkspace(legacyState)?`<button class="btn primary" onclick="publishLocalWorkspace(true)">Publish This Browser to Team</button>`:''}<button class="btn danger" onclick="resetAllData()">Reset Shared Workspace</button></div></div>`)}
 function resetAllData(){if(!confirm('This will wipe every project and setting in this browser. Continue?'))return;state=defaultState();save(false);renderSettings()}
 function settingsBackups(){return section('backups','Emergency Backups',`<div class="row between"><div class="small muted">Independent rotating snapshots. Prototype stores up to 24 local snapshots.</div><button class="btn small" onclick="makeBackup()">Create Snapshot</button></div><div style="margin-top:8px">${(state.company.backups||[]).slice().reverse().map(b=>`<div class="file-row"><span>${new Date(b.time).toLocaleString()}</span><button class="btn small" onclick="restoreBackup('${b.id}')">Restore this backup</button></div>`).join('')||'<div class="empty">No snapshots yet.</div>'}</div>`)}
 function makeBackup(){const clone=JSON.parse(JSON.stringify(state));clone.company.backups=[];state.company.backups=state.company.backups||[];state.company.backups.push({id:uid(),time:new Date().toISOString(),data:clone});if(state.company.backups.length>24)state.company.backups.shift();state.company.backupCounter=(state.company.backupCounter||0)+1;save(false);renderSettings()}
