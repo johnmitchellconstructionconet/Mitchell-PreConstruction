@@ -166,13 +166,13 @@ function copyTextFallback(text){
  let ok=false;try{ok=document.execCommand('copy')}catch(e){}ta.remove();return ok;
 }
 async function copyClientPortalLink(){
- const p=currentProject();let url=clientPortalUrl(p);if(!url)url=await publishClientPortal(p,true);if(!url)return false;
+ const p=currentProject();const url=await publishClientPortal(p,true);if(!url)return false;
  try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(url);toast('Client link copied');return true}}catch(e){}
  if(copyTextFallback(url)){toast('Client link copied');return true}
  showClientLinkModal(url,true);return false;
 }
 async function showClientLinkModal(prefill='',copyFailed=false){
- const p=currentProject();let url=prefill||clientPortalUrl(p);if(!url)url=await publishClientPortal(p,true);if(!url)return;
+ const p=currentProject();const published=await publishClientPortal(p,true);const url=published||prefill;if(!url)return;
  modal(`<div class="row between wrap"><div><h2 style="margin:0">Client Link</h2><p class="small muted" style="margin:5px 0 0">Paste this secure link into the client's email. No ALIGN login is required.</p></div><button class="btn" onclick="closeModal()">Close</button></div>${copyFailed?'<div class="notice warn" style="margin-top:12px">Your browser blocked automatic clipboard access. Use the field below and press Copy, or select the link manually.</div>':''}<div class="field" style="margin-top:14px"><label>Client Portal Link</label><div class="row" style="gap:8px"><input id="client_link_field" value="${esc(url)}" readonly style="flex:1"><button class="btn dark" onclick="copyClientLinkFromField()">Copy</button></div></div><div class="modal-actions"><button class="btn" onclick="openClientPortalLink()">Open Link</button><button class="btn primary" onclick="copyClientLinkFromField()">Copy Link</button></div>`);
  setTimeout(()=>{const el=document.getElementById('client_link_field');if(el){el.focus();el.select()}},50);
 }
@@ -183,7 +183,7 @@ async function copyClientLinkFromField(){
  if(!ok){el.focus();el.select();try{ok=document.execCommand('copy')}catch(e){}}
  if(ok)toast('Client link copied');else{el.focus();el.select();toast('Link selected — press Ctrl+C or Cmd+C')}
 }
-async function openClientPortalLink(){const p=currentProject();let url=clientPortalUrl(p);if(!url)url=await publishClientPortal(p,true);if(url)window.open(url,'_blank','noopener')}
+async function openClientPortalLink(){const p=currentProject();const url=await publishClientPortal(p,true);if(url)window.open(url,'_blank','noopener')}
 async function disableClientPortalLink(){const p=currentProject();if(!p?.clientPortalToken)return;if(!confirm('Disable this client link? The client will no longer be able to open it.'))return;const {error}=await sb.from('client_portals').update({active:false,updated_at:new Date().toISOString(),updated_by:authUser.id}).eq('token',p.clientPortalToken);if(error)return alert(error.message);toast('Client link disabled');}
 async function syncPublishedClientPortals(){
  if(!authUser)return;
@@ -202,7 +202,7 @@ function renderPublicClientPortal(snapshot){
 async function bootPublicClient(token){
  document.getElementById('app').innerHTML='<div class="boot-screen">Loading your project update…</div>';
  const {data,error}=await sb.rpc('get_public_client_portal',{p_token:token});
- if(error||!data){document.getElementById('app').innerHTML='<div class="auth-screen"><div class="auth-card"><div class="auth-title">Link unavailable</div><p class="auth-sub">This client link is invalid, disabled, or no longer available.</p></div></div>';return}
+ if(error||!data){console.error('Client portal lookup failed',error);document.getElementById('app').innerHTML='<div class="auth-screen"><div class="auth-card"><div class="auth-title">Link unavailable</div><p class="auth-sub">This client link has not been published, is disabled, or is no longer available. Ask the project team for a new link.</p></div></div>';return}
  renderPublicClientPortal(data);
 }
 let state=defaultState();
