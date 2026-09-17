@@ -164,7 +164,7 @@ function publicClientSnapshot(p){
  const ph=phaseByNumber(p.currentPhase);
  const ranges=clientPhaseRanges(p).map(r=>({number:r.ph.number,name:r.ph.name,color:r.ph.color||phaseColor(r.ph.number),startDate:r.startDate||null,endDate:r.endDate||null,working:r.working||0,done:r.done||0}));
  return {
-  project:{name:p.name||'',client:p.client||'',location:p.location||'',currentPhase:p.currentPhase||null,currentPhaseName:ph?.name||'Ready for Production',forecastConstructionStart:forecastConstructionStartDate(p)||null},
+  project:{name:p.name||'',client:p.client||'',location:p.location||'',currentPhase:p.currentPhase||null,currentPhaseName:ph?.name||'Ready for Production',forecastConstructionStart:computedForecastConstructionStart(p)||null},
   schedule:ranges,
   phases:sortedPhases().map(x=>({number:x.number,name:x.name,color:x.color||phaseColor(x.number),description:x.description||''})),
   updates:(p.clientUpdates||[]).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,6).map(u=>({date:u.date||'',text:u.text||''}))
