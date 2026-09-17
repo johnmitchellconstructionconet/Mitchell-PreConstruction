@@ -58,7 +58,7 @@ input,select,textarea{background:#fff;border-color:#ddd9d2}
 <div id="app"></div>
 <div id="overlay"></div>
 <script>
-const BUILD='ALIGN Full Build 2026.09.16';
+const BUILD='ALIGN v26 Client Link 2026.09.17';
 const uid=()=>crypto?.randomUUID?.()||('id_'+Date.now()+'_'+Math.random().toString(36).slice(2));
 const iso=d=>{if(!d)return'';const x=new Date(d);return isNaN(x)?'':x.toISOString().slice(0,10)};
 const today=()=>iso(new Date());
@@ -130,6 +130,61 @@ function defaultState(){
 const SUPABASE_URL='https://zkcttyeimgymjkmfbwbr.supabase.co';
 const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprY3R0eWVpbWd5bWprbWZid2JyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NjY2MTEsImV4cCI6MjEwMzU0MjYxMX0.AT7BbFlbJDt6U2JpCGbK_FDzGqwWH2Dvbta7pKpk-n8';
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+const CLIENT_TOKEN_PARAM='client';
+function clientPortalTokenFromUrl(){return new URLSearchParams(location.search).get(CLIENT_TOKEN_PARAM)||'';}
+function newClientPortalToken(){
+ const a=new Uint8Array(24);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
+}
+function publicClientSnapshot(p){
+ const ph=phaseByNumber(p.currentPhase);
+ const ranges=clientPhaseRanges(p).map(r=>({number:r.ph.number,name:r.ph.name,color:r.ph.color||phaseColor(r.ph.number),startDate:r.startDate||null,endDate:r.endDate||null,working:r.working||0,done:r.done||0}));
+ return {
+  project:{name:p.name||'',client:p.client||'',location:p.location||'',currentPhase:p.currentPhase||null,currentPhaseName:ph?.name||'Ready for Production',forecastConstructionStart:forecastConstructionStartDate(p)||null},
+  schedule:ranges,
+  phases:sortedPhases().map(x=>({number:x.number,name:x.name,color:x.color||phaseColor(x.number),description:x.description||''})),
+  updates:(p.clientUpdates||[]).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(u=>({date:u.date||'',text:u.text||''}))
+ };
+}
+async function publishClientPortal(p=currentProject(),quiet=false){
+ if(!authUser||!p)return null;
+ if(!p.clientPortalToken)p.clientPortalToken=newClientPortalToken();
+ const payload=publicClientSnapshot(p);
+ const {error}=await sb.from('client_portals').upsert({token:p.clientPortalToken,project_key:p.id,payload,active:true,updated_at:new Date().toISOString(),updated_by:authUser.id},{onConflict:'token'});
+ if(error){if(!quiet)alert('Could not publish client link: '+error.message);return null}
+ save(false);
+ if(!quiet)toast('Client link published');
+ return clientPortalUrl(p);
+}
+function clientPortalUrl(p=currentProject()){
+ if(!p?.clientPortalToken)return '';
+ const u=new URL(location.href);u.search='';u.hash='';u.searchParams.set(CLIENT_TOKEN_PARAM,p.clientPortalToken);return u.toString();
+}
+async function copyClientPortalLink(){
+ const p=currentProject();let url=clientPortalUrl(p);if(!url)url=await publishClientPortal(p,true);if(!url)return;
+ try{await navigator.clipboard.writeText(url);toast('Client link copied')}catch(e){prompt('Copy this client link:',url)}
+}
+async function openClientPortalLink(){const p=currentProject();let url=clientPortalUrl(p);if(!url)url=await publishClientPortal(p,true);if(url)window.open(url,'_blank','noopener')}
+async function disableClientPortalLink(){const p=currentProject();if(!p?.clientPortalToken)return;if(!confirm('Disable this client link? The client will no longer be able to open it.'))return;const {error}=await sb.from('client_portals').update({active:false,updated_at:new Date().toISOString(),updated_by:authUser.id}).eq('token',p.clientPortalToken);if(error)return alert(error.message);toast('Client link disabled');}
+async function syncPublishedClientPortals(){
+ if(!authUser)return;
+ const pubs=(state.projects||[]).filter(p=>p.clientPortalToken);
+ for(const p of pubs){const payload=publicClientSnapshot(p);await sb.from('client_portals').upsert({token:p.clientPortalToken,project_key:p.id,payload,active:true,updated_at:new Date().toISOString(),updated_by:authUser.id},{onConflict:'token'});}
+}
+function publicClientSchedule(snapshot){
+ const rows=snapshot.schedule||[];
+ if(!rows.some(r=>r.startDate&&r.endDate))return '<div class="notice">Your project schedule will appear here once the baseline schedule has been set.</div>';
+ return `<div class="client-schedule"><div class="client-schedule-inner"><div class="client-schedule-axis"><div class="client-axis-label">Preconstruction Schedule</div><div></div><div></div></div>${rows.map(r=>`<div class="client-sched-row"><div class="client-sched-label">Phase ${r.number} · ${esc(r.name)}<small>${r.working||'—'} working days scheduled</small></div><div class="client-sched-track" style="display:flex;align-items:center;padding:0 12px"><div style="height:10px;width:${Math.max(4,Math.round((r.done||0)*100))}%;background:${r.done>=1?'#6f8d78':snapshot.project.currentPhase===r.number?'#555148':'#cfc2a4'};border-radius:99px"></div></div><div class="client-date-range">${r.startDate?`${fmt(r.startDate)} → ${fmt(r.endDate)}`:'Dates not set'}</div></div>`).join('')}</div></div>`;
+}
+function renderPublicClientPortal(snapshot){
+ const proj=snapshot.project||{};const updates=snapshot.updates||[];const phases=snapshot.phases||[];
+ document.body.innerHTML=`<div style="min-height:100vh;background:#f4f2ef;padding:28px"><div style="max-width:1180px;margin:0 auto"><div class="client-portal"><div class="client-portal-head"><div style="font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8a877f;font-weight:800">Mitchell Construction & Design</div><h1>${esc(proj.name||'Project Update')}</h1><div class="small muted">${esc(proj.client||'')}${proj.location?' · '+esc(proj.location):''}</div><div style="margin-top:10px"><span class="phase-chip">Currently in Phase ${esc(String(proj.currentPhase||''))} · ${esc(proj.currentPhaseName||'')}</span></div>${proj.forecastConstructionStart?`<div class="notice" style="display:inline-block;margin-top:12px"><b>Forecast Construction Start:</b> ${fmt(proj.forecastConstructionStart)}</div>`:''}</div><div class="client-section-label">Schedule</div>${publicClientSchedule(snapshot)}<div class="client-section-label">Latest Updates</div>${updates.length?updates.map(u=>`<div class="client-update-card"><div class="note-meta">${fmt(u.date)}</div><div style="line-height:1.55">${esc(u.text)}</div></div>`).join(''):'<div class="client-update-empty">No client updates have been posted yet.</div>'}<div class="client-section-label">What Each Phase Means</div><div class="client-phase-grid">${phases.map(x=>`<div class="client-phase ${proj.currentPhase===x.number?'current':''}" style="--pc:${x.color||'#b5aa96'}">${proj.currentPhase===x.number?'<span class="current-ribbon">Current Phase</span>':''}<div class="row"><span class="phase-num" style="background:${x.color||'#b5aa96'};color:white">${x.number}</span><b>${esc(x.name)}</b></div><p class="small muted" style="margin:10px 0 0;line-height:1.55">${esc(x.description||'')}</p></div>`).join('')}</div><div style="text-align:center;color:#99958e;font-size:10px;margin-top:22px">ALIGN · Mitchell Construction & Design</div></div></div></div>`;
+}
+async function bootPublicClient(token){
+ document.getElementById('app').innerHTML='<div class="boot-screen">Loading your project update…</div>';
+ const {data,error}=await sb.rpc('get_public_client_portal',{p_token:token});
+ if(error||!data){document.getElementById('app').innerHTML='<div class="auth-screen"><div class="auth-card"><div class="auth-title">Link unavailable</div><p class="auth-sub">This client link is invalid, disabled, or no longer available.</p></div></div>';return}
+ renderPublicClientPortal(data);
+}
 let state=defaultState();
 let authUser=null;
 let remoteVersion=0;
@@ -213,6 +268,7 @@ async function flushRemoteSave(){
    return;
  }
  remoteVersion=Number(data[0].version);state.lastSaved=new Date().toISOString();saveInFlight=false;setSyncStatus('live');
+ syncPublishedClientPortals().catch(console.error);
  if(pendingSave)flushRemoteSave();
 }
 function scheduleRemoteSave(){clearTimeout(saveTimer);saveTimer=setTimeout(flushRemoteSave,180)}
@@ -506,7 +562,7 @@ function emailEmbedHtml(p){
 function clientTab(p){
  const ph=phaseByNumber(p.currentPhase),tab=p._clientViewTab||'schedule',latest=[...p.clientUpdates].sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
  const body=tab==='updates'?`<div class="row between" style="margin-bottom:10px"><div class="client-section-label" style="margin:0">Client Updates</div><button class="btn primary small" onclick="showClientUpdateModal()">+ Add Update</button></div>${p.clientUpdates.length?p.clientUpdates.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(u=>`<div class="client-update-card"><div class="note-meta">${fmt(u.date)} · ${esc(u.author)}</div><div style="line-height:1.55">${esc(u.text)}</div></div>`).join(''):`<div class="client-update-empty">No client updates posted yet.</div>`}`:`<div class="client-section-label">Full Schedule</div>${clientScheduleVisual(p)}<div class="client-section-label">What Each Phase Means</div>${clientPhaseCards(p)}`;
- return `<div class="client-portal"><div class="client-portal-head"><h1>${esc(p.name)}</h1><div class="small muted">${esc(p.client)}${p.location?' · '+esc(p.location):''}</div><div class="client-actions"><button class="btn small" onclick="window.print()">🖨 Print / Save as PDF</button><button class="btn small" onclick="previewEmailEmbed()">✉ Preview Email</button><button class="btn dark small" onclick="copyEmailEmbed()">Copy for Email</button></div></div><div class="client-portal-tabs"><button class="${tab==='schedule'?'active':''}" onclick="setClientViewTab('schedule')">Schedule</button><button class="${tab==='updates'?'active':''}" onclick="setClientViewTab('updates')">Updates</button></div>${body}</div>`
+ return `<div class="client-portal"><div class="client-portal-head"><h1>${esc(p.name)}</h1><div class="small muted">${esc(p.client)}${p.location?' · '+esc(p.location):''}</div><div class="client-actions"><button class="btn small" onclick="window.print()">🖨 Print / Save as PDF</button><button class="btn primary small" onclick="publishClientPortal()">↗ Publish Client Link</button><button class="btn dark small" onclick="copyClientPortalLink()">Copy Client Link</button><button class="btn small" onclick="openClientPortalLink()">Open Client Link</button>${p.clientPortalToken?'<button class="btn small danger" onclick="disableClientPortalLink()">Disable Link</button>':''}</div></div><div class="client-portal-tabs"><button class="${tab==='schedule'?'active':''}" onclick="setClientViewTab('schedule')">Schedule</button><button class="${tab==='updates'?'active':''}" onclick="setClientViewTab('updates')">Updates</button></div>${body}</div>`
 }
 function setClientViewTab(tab){currentProject()._clientViewTab=tab;save(false);renderProject()}
 function previewEmailEmbed(){
@@ -629,7 +685,7 @@ function removeTaskFile(id,fid){const t=currentProject().tasks.find(x=>x.id===id
 // Apply stored theme colors
 function applyStoredTheme(){for(const [k,css] of Object.entries({ink:'--ink',accent:'--accent',jade:'--jade',rust:'--rust',gold:'--gold'})){const v=state.company.branding?.colors?.[k];if(v)document.documentElement.style.setProperty(css,v)}}
 const originalRender=render;render=function(){applyStoredTheme();return originalRender();};
-sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'&&!session)renderLogin();});
+sb.auth.onAuthStateChange((event,session)=>{if(clientPortalTokenFromUrl())return;if(event==='SIGNED_OUT'&&!session)renderLogin();});
 bootApp();
 </script>
 </body>
