@@ -138,13 +138,19 @@ function clientViewSnapshotFromUrl(){
  try{
   let raw=h.slice('#clientview='.length).replace(/-/g,'+').replace(/_/g,'/');
   while(raw.length%4)raw+='=';
-  const json=decodeURIComponent(Array.prototype.map.call(atob(raw),c=>'%' + ('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+  const bin=atob(raw);
+  const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+  const json=new TextDecoder().decode(bytes);
   return JSON.parse(json);
  }catch(e){console.error('Invalid client snapshot link',e);return null}
 }
 function encodeClientViewSnapshot(snapshot){
  const json=JSON.stringify(snapshot);
- const b64=btoa(unescape(encodeURIComponent(json)));
+ const bytes=new TextEncoder().encode(json);
+ let binary='';
+ const chunk=0x8000;
+ for(let i=0;i<bytes.length;i+=chunk){binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));}
+ const b64=btoa(binary);
  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 function viewOnlyClientUrl(p=currentProject()){
@@ -526,9 +532,38 @@ function createProject(){const name=document.getElementById('np_name').value.tri
 function openProject(id){state.currentProjectId=id;state.view='project';state.projectTab='overview';save(false);render()}
 function deleteProject(id){const p=state.projects.find(x=>x.id===id);if(!p)return;const typed=prompt(`Delete project \"${p.name}\"? This permanently removes the project and its tasks, notes, files, schedule, and settings from the shared ALIGN workspace.\n\nType DELETE to confirm.`,'');if(typed!=='DELETE')return;state.projects=state.projects.filter(x=>x.id!==id);if(state.currentProjectId===id){state.currentProjectId='';state.view='dashboard';state.projectTab='overview';}save(false);render();toast('Project deleted')}
 
-function projectTabs(){const tabs=[['overview','Overview'],['clarifications','Clarifications'],['estimate','Estimate'],['plans','Plans & Design'],['contracts','Proposals & Contracts'],['files','Files'],['meetings','Meeting Notes'],['client','Client View']];return `<div class="project-tabs">${tabs.map(([k,l])=>`<button class="${state.projectTab===k?'active':''}" onclick="switchProjectTab('${k}')">${l}</button>`).join('')}</div>`}
-function switchProjectTab(k){state.projectTab=k;save(false);renderProject()}
-function renderProject(){const p=currentProject();if(!p){nav('dashboard');return}ensureProjectStepSync(p);let body='';switch(state.projectTab){case'overview':body=overviewTab(p);break;case'clarifications':body=clarificationsTab(p);break;case'estimate':body=estimateTab(p);break;case'plans':body=plansTab(p);break;case'contracts':body=contractsTab(p);break;case'files':body=filesTab(p);break;case'meetings':body=meetingsTab(p);break;case'client':body=clientTab(p);break}document.getElementById('app').innerHTML=shell(`${projectTabs()}${body}`,p.name,`<button class="btn small mobile-project-back" onclick="nav('dashboard')">← Dashboard</button><button class="btn small" onclick="nav('dashboard')">All Projects</button><button class="btn small danger" onclick="deleteProject('${p.id}')">Delete Project</button>`);}
+function projectTabs(){const tabs=[['overview','Overview'],['clarifications','Clarifications'],['estimate','Estimate'],['plans','Plans & Design'],['contracts','Proposals & Contracts'],['files','Files'],['meetings','Meeting Notes'],['client','Client View']];return `<div class="project-tabs">${tabs.map(([k,l])=>`<button type="button" data-project-tab="${k}" class="${state.projectTab===k?'active':''}" onclick="switchProjectTab('${k}');return false;">${l}</button>`).join('')}</div>`}
+function switchProjectTab(k){
+ const allowed=['overview','clarifications','estimate','plans','contracts','files','meetings','client'];
+ if(!allowed.includes(k))return;
+ state.projectTab=k;
+ // Tab selection is per-browser UI state. Do not sync it into the shared company record,
+ // otherwise a realtime refresh from another employee can immediately kick this user back to another tab.
+ renderProject();
+ requestAnimationFrame(()=>{const btn=document.querySelector(`[data-project-tab="${k}"]`);if(btn)btn.scrollIntoView({block:'nearest',inline:'nearest'});});
+}
+function renderProject(){
+ const p=currentProject();if(!p){nav('dashboard');return}
+ ensureProjectStepSync(p);
+ let body='';
+ try{
+  switch(state.projectTab){
+   case'overview':body=overviewTab(p);break;
+   case'clarifications':body=clarificationsTab(p);break;
+   case'estimate':body=estimateTab(p);break;
+   case'plans':body=plansTab(p);break;
+   case'contracts':body=contractsTab(p);break;
+   case'files':body=filesTab(p);break;
+   case'meetings':body=meetingsTab(p);break;
+   case'client':body=clientTab(p);break;
+   default:state.projectTab='overview';body=overviewTab(p);
+  }
+ }catch(err){
+  console.error('Project tab render failed',state.projectTab,err);
+  body=`<div class="notice danger"><b>Could not open ${esc(state.projectTab==='client'?'Client View':'this tab')}.</b><div class="small" style="margin-top:6px">${esc(err?.message||String(err))}</div><button type="button" class="btn small" style="margin-top:10px" onclick="state.projectTab='overview';renderProject()">Return to Overview</button></div>`;
+ }
+ document.getElementById('app').innerHTML=shell(`${projectTabs()}${body}`,p.name,`<button class="btn small mobile-project-back" onclick="nav('dashboard')">← Dashboard</button><button class="btn small" onclick="nav('dashboard')">All Projects</button><button class="btn small danger" onclick="deleteProject('${p.id}')">Delete Project</button>`);
+}
 
 function overviewTab(p){const cs=currentStep(p);const ph=cs?phaseByNumber(cs.phaseNumber):null;const tpl=cs?allTemplateSteps().find(x=>x.step.id===cs.templateStepId):null;const inPhase=cs?projectStepsFor(p,cs.phaseNumber):[];const stepNo=cs?inPhase.findIndex(s=>s.id===cs.id)+1:0;const overdue=cs?.dueDate&&cs.dueDate<today();const assigned=cs?resolveAssignee(cs):'';const daysActive=cs?.startedDate?daysBetween(cs.startedDate,today()):0;const stuck=cs&&(!assigned||daysActive>10);
  const phases=sortedPhases().map(x=>`<div class="phase-pill ${p.currentPhase===x.number?'active':''}"><span class="phase-num">${x.number}</span>${p.currentPhase===x.number?esc(x.name):''}</div>`).join('')+`<div class="phase-pill ${!p.currentPhase?'active':''}"><span class="phase-num">✓</span></div>`;
@@ -726,7 +761,7 @@ function copyClientShareUrl(){
  if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(field.value).then(()=>{if(feedback)feedback.textContent='Link copied. Paste it directly into the client email.';toast('Client link copied')}).catch(()=>{if(feedback)feedback.textContent='Link selected — press Ctrl+C or Cmd+C to copy.';toast('Link selected — press Ctrl+C or Cmd+C')});return}
  if(feedback)feedback.textContent='Link selected — press Ctrl+C or Cmd+C to copy.';toast('Link selected — press Ctrl+C or Cmd+C');
 }
-function setClientViewTab(tab){currentProject()._clientViewTab=tab;save(false);renderProject()}
+function setClientViewTab(tab){const p=currentProject();if(!p)return;p._clientViewTab=tab;renderProject()}
 function previewEmailEmbed(){
  const p=currentProject();if(!p){toast('Open a project first');return}
  const html=emailEmbedHtml(p);
