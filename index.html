@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ALIGN</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --bg:#fbfaf8;--panel:#fff;--ink:#252525;--muted:#7e7b74;--line:#e6e3de;--soft:#f1efeb;
@@ -49,6 +50,8 @@ input,select,textarea{background:#fff;border-color:#ddd9d2}
 
 .meeting-setting{display:flex;flex-direction:column;gap:5px;min-width:0}.meeting-attendees-summary{border:0;background:transparent;padding:0;text-align:left;font-size:10px;line-height:1.25;color:#6f6b61;text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;white-space:normal;overflow-wrap:anywhere}.meeting-attendees-summary:hover{color:#292923}
 .schedule-status-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px;background:#f7f6f3}.schedule-status-banner>div:first-child{display:flex;flex-direction:column;gap:3px}.schedule-status-banner b{font-size:14px}.schedule-status-banner span{font-size:11px;color:var(--muted);max-width:850px}.schedule-status-number{font-weight:800;font-size:22px;line-height:1;text-align:right;white-space:nowrap}.schedule-status-number small{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;margin-top:4px;font-weight:700}.schedule-behind{background:#fff4ef;border-color:#df9f86;color:#9d4a2f}.schedule-behind span{color:#875f52}.schedule-ahead{background:#f0f6f1;border-color:#9eb7a5;color:#4f7159}.schedule-on{background:#f4f4f1;border-color:#cfcfc9;color:#5b5a55}.health-behind{background:#fff7f3!important;border-color:#e1ac98!important}.health-behind strong{color:#a14f34}.health-ahead{background:#f3f8f4!important;border-color:#a8beaE!important}.health-ahead strong{color:#4f7159}
+
+.auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f2ef}.auth-card{width:min(430px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:var(--shadow)}.auth-logo{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:24px}.auth-logo img{max-width:260px;max-height:130px;object-fit:contain}.auth-title{font-size:26px;font-weight:800;letter-spacing:-.03em}.auth-sub{color:var(--muted);font-size:13px;text-align:center}.auth-error{margin-top:12px;padding:10px 12px;border-radius:8px;background:#fff4f1;color:#934b3b;border:1px solid #e7c8bf;display:none}.sync-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#9a968e;margin-right:5px}.sync-dot.live{background:#718c78}.sync-dot.saving{background:#b99558}.sync-dot.error{background:#b16c56}.user-card{margin-top:10px;padding:10px;border:1px solid #dedbd5;border-radius:10px;background:#ebe9e5}.logout-btn{width:100%;margin-top:8px;border:1px solid #d7d3cc;background:#fff;border-radius:8px;padding:8px;text-align:left}.boot-screen{min-height:100vh;display:grid;place-items:center;color:#777;background:#f4f2ef}
 </style>
 </head>
 <body>
@@ -124,8 +127,88 @@ function defaultState(){
   projects:[],currentProjectId:null,view:'dashboard',projectTab:'overview',loggedInName:'John Mitchell',lastSaved:null
  };
 }
-let state;
-try{state=JSON.parse(localStorage.getItem('align_full_v1'))||defaultState()}catch(e){state=defaultState()}
+const SUPABASE_URL='https://zkcttyeimgymjkmfbwbr.supabase.co';
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprY3R0eWVpbWd5bWprbWZid2JyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NjY2MTEsImV4cCI6MjEwMzU0MjYxMX0.AT7BbFlbJDt6U2JpCGbK_FDzGqwWH2Dvbta7pKpk-n8';
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+let state=defaultState();
+let authUser=null;
+let remoteVersion=0;
+let syncStatus='offline';
+let saveTimer=null;
+let saveInFlight=false;
+let pendingSave=false;
+let realtimeChannel=null;
+let booted=false;
+let legacyState=null;
+try{legacyState=JSON.parse(localStorage.getItem('align_full_v1')||'null')}catch(e){}
+function sharedPayload(){return {company:state.company,projects:state.projects};}
+function preserveUi(remote){
+ const ui={currentProjectId:state.currentProjectId,view:state.view,projectTab:state.projectTab,loggedInName:state.loggedInName,lastSaved:state.lastSaved};
+ state={...defaultState(),...remote,...ui};
+ migrate();applyActualProcessMigration();
+}
+function loggedInDisplayName(){
+ const email=(authUser?.email||'').toLowerCase();
+ const match=(state.company?.users||[]).find(u=>(u.email||'').toLowerCase()===email);
+ return match?.name||authUser?.user_metadata?.full_name||authUser?.email||'Team Member';
+}
+function setSyncStatus(v){syncStatus=v;const el=document.getElementById('sync_status');if(el){el.innerHTML=`<span class="sync-dot ${v==='live'?'live':v==='saving'?'saving':v==='error'?'error':''}"></span>${v==='live'?'Synced':v==='saving'?'Saving…':v==='error'?'Sync error':'Offline'}`}}
+async function loadSharedState(){
+ const {data,error}=await sb.from('align_app_state').select('data,version,updated_at').eq('id','main').maybeSingle();
+ if(error)throw error;
+ if(!data){
+   const seed=(legacyState&&legacyState.company)?{company:legacyState.company,projects:legacyState.projects||[]}:{company:defaultState().company,projects:[]};
+   const {data:created,error:createErr}=await sb.from('align_app_state').insert({id:'main',data:seed,version:1,updated_by:authUser.id}).select('data,version').single();
+   if(createErr){
+     // Another employee may have created it between our read and insert.
+     const retry=await sb.from('align_app_state').select('data,version').eq('id','main').single();
+     if(retry.error)throw createErr;
+     preserveUi(retry.data.data);remoteVersion=Number(retry.data.version||1);
+   }else{preserveUi(created.data);remoteVersion=Number(created.version||1);}
+ }else{preserveUi(data.data);remoteVersion=Number(data.version||1);}
+ state.loggedInName=loggedInDisplayName();
+ localStorage.removeItem('align_full_v1');
+}
+async function flushRemoteSave(){
+ if(!authUser||saveInFlight){pendingSave=true;return}
+ saveInFlight=true;pendingSave=false;setSyncStatus('saving');
+ const payload=JSON.parse(JSON.stringify(sharedPayload()));
+ const expected=remoteVersion;
+ const next=expected+1;
+ const {data,error}=await sb.from('align_app_state').update({data:payload,version:next,updated_at:new Date().toISOString(),updated_by:authUser.id}).eq('id','main').eq('version',expected).select('version,updated_at');
+ if(error){saveInFlight=false;setSyncStatus('error');console.error(error);toast('Could not sync changes');return}
+ if(!data||!data.length){
+   saveInFlight=false;setSyncStatus('error');
+   const latest=await sb.from('align_app_state').select('data,version').eq('id','main').single();
+   if(!latest.error){preserveUi(latest.data.data);remoteVersion=Number(latest.data.version||remoteVersion);state.loggedInName=loggedInDisplayName();render();toast('A newer team change was loaded. Please retry your last edit.');}
+   return;
+ }
+ remoteVersion=Number(data[0].version);state.lastSaved=new Date().toISOString();saveInFlight=false;setSyncStatus('live');
+ if(pendingSave)flushRemoteSave();
+}
+function scheduleRemoteSave(){clearTimeout(saveTimer);saveTimer=setTimeout(flushRemoteSave,180)}
+async function subscribeRealtime(){
+ if(realtimeChannel)await sb.removeChannel(realtimeChannel);
+ realtimeChannel=sb.channel('align-shared-state').on('postgres_changes',{event:'UPDATE',schema:'public',table:'align_app_state',filter:'id=eq.main'},payload=>{
+   const incoming=Number(payload.new.version||0);if(incoming<=remoteVersion)return;
+   remoteVersion=incoming;preserveUi(payload.new.data);state.loggedInName=loggedInDisplayName();state.lastSaved=payload.new.updated_at||new Date().toISOString();setSyncStatus('live');render();
+ }).subscribe(status=>{if(status==='SUBSCRIBED')setSyncStatus('live')});
+}
+function renderLogin(message=''){
+ document.getElementById('app').innerHTML=`<div class="auth-screen"><div class="auth-card"><div class="auth-logo"><div class="auth-title">ALIGN</div><div class="auth-sub">Mitchell Construction & Design · Preconstruction Management</div></div><form id="login_form"><div class="field"><label>Email</label><input class="input" id="login_email" type="email" autocomplete="email" required></div><div class="field" style="margin-top:12px"><label>Password</label><input class="input" id="login_password" type="password" autocomplete="current-password" required></div><button class="btn primary" style="width:100%;margin-top:16px" type="submit">Sign In</button><div class="auth-error" id="login_error">${esc(message)}</div></form></div></div>`;
+ document.getElementById('login_form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;btn.textContent='Signing in…';const email=document.getElementById('login_email').value.trim(),password=document.getElementById('login_password').value;const {data,error}=await sb.auth.signInWithPassword({email,password});if(error){const er=document.getElementById('login_error');er.style.display='block';er.textContent=error.message;btn.disabled=false;btn.textContent='Sign In';return}authUser=data.user;await bootAuthenticated();});
+}
+async function logout(){await sb.auth.signOut();authUser=null;if(realtimeChannel){await sb.removeChannel(realtimeChannel);realtimeChannel=null}renderLogin();}
+async function bootAuthenticated(){
+ document.getElementById('app').innerHTML='<div class="boot-screen">Loading shared ALIGN workspace…</div>';
+ try{await loadSharedState();await subscribeRealtime();booted=true;render();}catch(err){console.error(err);renderLogin('Could not load the shared workspace. Make sure the Supabase multi-user migration has been run.');}
+}
+async function bootApp(){
+ const {data:{session}}=await sb.auth.getSession();
+ if(!session){renderLogin();return}
+ authUser=session.user;await bootAuthenticated();
+}
+
 const ACTUAL_PROCESS_VERSION=2;
 const ACTUAL_STEP_TITLES=[
  ['Design Discovery Form Sent','Discovery Form & Creative Brief Completed','Internal Review of Discovery & Brief','Design Discovery / Client Review Meeting'],
@@ -173,10 +256,7 @@ function migrate(){
  state.projects=state.projects||[];
  state.projects.forEach(p=>{p.architectId=p.architectId||'';p.designerId=p.designerId||'';p.estimateSheetUrl=p.estimateSheetUrl||'';p.estimateSheetName=p.estimateSheetName||'';p.tasks=p.tasks||[];p.clarifications=p.clarifications||[];p.plans=p.plans||[];p.files=p.files||[];p.meetingNotes=p.meetingNotes||[];p.clientUpdates=p.clientUpdates||[];p.inspiration=p.inspiration||[];p.documents=p.documents||{};p.documentSlots=p.documentSlots||[{id:'preliminary',key:'preliminary',label:'Preliminary Proposal'},{id:'formal',key:'formal',label:'Formal Proposal'},{id:'agreement',key:'agreement',label:'Construction Agreement'}];p.projectSteps=p.projectSteps||seedProjectSteps();p.fileTags=p.fileTags||['Design Discovery Form','Inspiration Photos','Reading Material','Notes','Other'];p.planTags=p.planTags||['Architectural','Structural','Electrical','Plumbing','Mechanical','Site Plan','Elevations','Other'];p.meetingTags=p.meetingTags||['Client Meeting','Internal','Site Visit','Design Review','Subcontractor'];p.clarificationRounds=p.clarificationRounds||[{id:'round1',name:'1st Round',audience:'Client'}];p.goVisuallyLink=p.goVisuallyLink||'';p.files.forEach(f=>{f.tags=f.tags||[f.category||'Other']});p.plans.forEach(f=>{f.tags=f.tags||[f.category||'Other']});p.meetingNotes.forEach(n=>{n.tags=n.tags||[n.type||'Internal'];n.title=n.title||n.type||'Meeting Note';n.html=n.html||esc(n.notes||'')});p.clarifications.forEach(c=>{c.roundId=c.roundId||'round1';c.date=c.date||today();c.location=c.location||'';c.trade=c.trade||'';c.markedBy=c.markedBy||'';});});
 }
-migrate();
-applyActualProcessMigration();
-save(false);
-function save(msg=true){state.lastSaved=new Date().toISOString();localStorage.setItem('align_full_v1',JSON.stringify(state));if(msg)toast('Saved');}
+function save(msg=true){state.lastSaved=new Date().toISOString();scheduleRemoteSave();if(msg)toast('Saved');}
 function toast(t){const el=document.createElement('div');el.className='toast';el.textContent=t;document.body.appendChild(el);setTimeout(()=>el.remove(),1700)}
 function activeUsers(){return (state.company.users||[]).filter(u=>u.status==='Active').map(u=>u.name)}
 function people(){return [...activeUsers(),...(state.company.externalContacts||[])];}
@@ -227,7 +307,7 @@ function ensureProjectStepSync(p){const byTpl=new Map(p.projectSteps.map(x=>[x.t
 
 function shell(content,title='',actions=''){
  const logo=state.company.branding?.logo;
- return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-logo">${logo?`<img src="${logo}" alt="Mitchell Construction & Design">`:'<div class="brand-placeholder">Upload company logo</div>'}</div><div class="wordmark">ALIG<span class="n">N</span></div></div><div class="side-group"><div class="side-label">Workspace</div><button class="side-btn ${state.view==='dashboard'?'active':''}" onclick="nav('dashboard')">⌂ Dashboard</button><button class="side-btn ${state.view==='taskcenter'?'active':''}" onclick="nav('taskcenter')">✓ Task Center</button><button class="side-btn ${state.view==='settings'?'active':''}" onclick="nav('settings')">⚙ Company Settings</button></div><div class="sidebar-foot">${esc(state.company.name)}<br><span class="tiny">${esc(BUILD)}</span></div></aside><main class="main"><div class="topbar"><div><div class="eyebrow">${state.view==='project'?'Project Workspace':'Preconstruction Management'}</div><h1>${esc(title||'ALIGN')}</h1></div><div class="row wrap">${actions}<span class="status-save">${state.lastSaved?'Saved '+new Date(state.lastSaved).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'Saved locally'}</span></div></div>${content}</main></div>`
+ return `<div class="app"><aside class="sidebar"><div class="brand"><div class="brand-logo">${logo?`<img src="${logo}" alt="Mitchell Construction & Design">`:'<div class="brand-placeholder">Upload company logo</div>'}</div><div class="wordmark">ALIG<span class="n">N</span></div></div><div class="side-group"><div class="side-label">Workspace</div><button class="side-btn ${state.view==='dashboard'?'active':''}" onclick="nav('dashboard')">⌂ Dashboard</button><button class="side-btn ${state.view==='taskcenter'?'active':''}" onclick="nav('taskcenter')">✓ Task Center</button><button class="side-btn ${state.view==='settings'?'active':''}" onclick="nav('settings')">⚙ Company Settings</button></div><div class="sidebar-foot"><div id="sync_status"><span class="sync-dot ${syncStatus==='live'?'live':syncStatus==='saving'?'saving':syncStatus==='error'?'error':''}"></span>${syncStatus==='live'?'Synced':syncStatus==='saving'?'Saving…':syncStatus==='error'?'Sync error':'Offline'}</div><div class="user-card"><b>${esc(state.loggedInName||'Team Member')}</b><div class="tiny muted">${esc(authUser?.email||'')}</div><button class="logout-btn" onclick="logout()">↪ Log Out</button></div><div style="margin-top:10px">${esc(state.company.name)}<br><span class="tiny">${esc(BUILD)}</span></div></div></aside><main class="main"><div class="topbar"><div><div class="eyebrow">${state.view==='project'?'Project Workspace':'Preconstruction Management'}</div><h1>${esc(title||'ALIGN')}</h1></div><div class="row wrap">${actions}<span class="status-save">${state.lastSaved?'Saved '+new Date(state.lastSaved).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'Not synced yet'}</span></div></div>${content}</main></div>`
 }
 function render(){if(state.view==='dashboard')renderDashboard();else if(state.view==='taskcenter')renderTaskCenter();else if(state.view==='settings')renderSettings();else if(state.view==='project')renderProject();}
 function nav(v){state.view=v;if(v!=='project')state.currentProjectId=null;save(false);render()}
@@ -480,8 +560,10 @@ async function addTaskFiles(id,fileList){const t=currentProject().tasks.find(x=>
 function removeTaskFile(id,fid){const t=currentProject().tasks.find(x=>x.id===id);t.attachments=t.attachments.filter(x=>x.id!==fid);save(false);showTaskModal(id)}
 
 // Apply stored theme colors
-for(const [k,css] of Object.entries({ink:'--ink',accent:'--accent',jade:'--jade',rust:'--rust',gold:'--gold'})){const v=state.company.branding?.colors?.[k];if(v)document.documentElement.style.setProperty(css,v)}
-render();
+function applyStoredTheme(){for(const [k,css] of Object.entries({ink:'--ink',accent:'--accent',jade:'--jade',rust:'--rust',gold:'--gold'})){const v=state.company.branding?.colors?.[k];if(v)document.documentElement.style.setProperty(css,v)}}
+const originalRender=render;render=function(){applyStoredTheme();return originalRender();};
+sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'&&!session)renderLogin();});
+bootApp();
 </script>
 </body>
 </html>
