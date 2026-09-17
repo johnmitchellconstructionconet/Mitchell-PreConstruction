@@ -599,7 +599,7 @@ function scheduleBars(p){
  min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
  const total=Math.max(1,days.length),dayMs=86400000;
- const idx=d=>{if(!d)return 0;const x=parseDate(d);x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
+ const idx=d=>{if(!d)return 0;const x=d instanceof Date?new Date(d):parseDate(d);if(!x||Number.isNaN(x.getTime()))return 0;x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
  const grid=`220px repeat(${total},42px)`;
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
  const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="left:${i*42}px"></div>`).join('');
@@ -764,7 +764,7 @@ function clientPhaseGantt(rows,currentPhase,interactive=true){
  min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
  const total=Math.max(1,days.length),dayMs=86400000,grid=`180px repeat(${total},42px)`;
- const idx=d=>{if(!d)return 0;const x=parseDate(d);x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
+ const idx=d=>{if(!d)return 0;const x=d instanceof Date?new Date(d):parseDate(d);if(!x||Number.isNaN(x.getTime()))return 0;x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
  const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="left:${i*42}px"></div>`).join('');
  const todayIndex=idx(today());
