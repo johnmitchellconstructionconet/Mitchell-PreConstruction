@@ -162,7 +162,11 @@ function newClientPortalToken(){
 }
 function publicClientSnapshot(p){
  const ph=phaseByNumber(p.currentPhase);
- const ranges=clientPhaseRanges(p).map(r=>({number:r.ph.number,name:r.ph.name,color:r.ph.color||phaseColor(r.ph.number),startDate:r.startDate||null,endDate:r.endDate||null,working:r.working||0,done:r.done||0}));
+ const ranges=clientPhaseRanges(p).map(r=>({
+  number:r.ph.number,name:r.ph.name,color:r.ph.color||phaseColor(r.ph.number),working:r.working||0,done:r.done||0,
+  baselineStart:r.baselineStart||null,baselineEnd:r.baselineEnd||null,
+  forecastStart:r.forecastStart||null,forecastEnd:r.forecastEnd||null
+ }));
  return {
   project:{name:p.name||'',client:p.client||'',location:p.location||'',currentPhase:p.currentPhase||null,currentPhaseName:ph?.name||'Ready for Production',forecastConstructionStart:computedForecastConstructionStart(p)||null},
   schedule:ranges,
@@ -283,9 +287,12 @@ async function syncPublishedClientPortals(){
  for(const p of pubs){const payload=publicClientSnapshot(p);await sb.from('client_portals').upsert({token:p.clientPortalToken,project_key:p.id,payload,active:true,updated_at:new Date().toISOString(),updated_by:authUser.id},{onConflict:'token'});}
 }
 function publicClientSchedule(snapshot){
- const rows=snapshot.schedule||[];
- if(!rows.some(r=>r.startDate&&r.endDate))return '<div class="notice">Your project schedule will appear here once the baseline schedule has been set.</div>';
- return `<div class="client-schedule"><div class="client-schedule-inner"><div class="client-schedule-axis"><div class="client-axis-label">Preconstruction Schedule</div><div></div><div></div></div>${rows.map(r=>`<div class="client-sched-row"><div class="client-sched-label">Phase ${r.number} · ${esc(r.name)}<small>${r.working||'—'} working days scheduled</small></div><div class="client-sched-track" style="display:flex;align-items:center;padding:0 12px"><div style="height:10px;width:${Math.max(4,Math.round((r.done||0)*100))}%;background:${r.done>=1?'#6f8d78':snapshot.project.currentPhase===r.number?'#555148':'#cfc2a4'};border-radius:99px"></div></div><div class="client-date-range">${r.startDate?`${fmt(r.startDate)} → ${fmt(r.endDate)}`:'Dates not set'}</div></div>`).join('')}</div></div>`;
+ const rows=(snapshot.schedule||[]).map(r=>({
+  ph:{number:r.number,name:r.name},working:r.working||0,done:r.done||0,
+  baselineStart:r.baselineStart||r.startDate||null,baselineEnd:r.baselineEnd||r.endDate||null,
+  forecastStart:r.forecastStart||r.startDate||null,forecastEnd:r.forecastEnd||r.endDate||null
+ }));
+ return clientPhaseGantt(rows,snapshot.project?.currentPhase||null,false);
 }
 function renderPublicClientPortal(snapshot){
  const proj=snapshot.project||{};const updates=snapshot.updates||[];const phases=snapshot.phases||[];
@@ -728,15 +735,35 @@ function deleteMeetingTag(i){const p=currentProject(),old=p.meetingTags[i];if(!c
 function deleteMeeting(id){if(!confirm('Delete this meeting note?'))return;currentProject().meetingNotes=currentProject().meetingNotes.filter(x=>x.id!==id);save(false);renderProject()}
 
 function clientPhaseRanges(p){
- const phases=sortedPhases();
- return phases.map(ph=>{const arr=projectStepsFor(p,ph.number);const dates=arr.flatMap(st=>[st.baselineDate,st.dueDate,st.completedDate].filter(Boolean));const start=arr.find(st=>st.baselineDate||st.dueDate||st.completedDate);const end=[...arr].reverse().find(st=>st.completedDate||st.dueDate||st.baselineDate);const startDate=start?(start.baselineDate||start.dueDate||start.completedDate):'';const endDate=end?(end.completedDate||end.dueDate||end.baselineDate):'';const working=arr.reduce((n,st)=>n+(Number((allTemplateSteps().find(x=>x.step.id===st.templateStepId)?.step.duration)||0)),0);const done=arr.length?arr.filter(st=>st.status==='done').length/arr.length:0;return {ph,arr,startDate,endDate,working,done}})
+ return sortedPhases().map(ph=>{
+  const arr=projectStepsFor(p,ph.number);
+  const b=arr.filter(st=>st.baselineDate);
+  const f=arr.filter(st=>st.completedDate||st.dueDate||st.baselineDate);
+  const baselineStart=b[0]?.baselineDate||'';
+  const baselineEnd=b[b.length-1]?.baselineDate||'';
+  const forecastStart=f[0]?(f[0].completedDate||f[0].dueDate||f[0].baselineDate):baselineStart;
+  const forecastEnd=f[f.length-1]?(f[f.length-1].completedDate||f[f.length-1].dueDate||f[f.length-1].baselineDate):baselineEnd;
+  const working=arr.reduce((n,st)=>n+(Number((allTemplateSteps().find(x=>x.step.id===st.templateStepId)?.step.duration)||0)),0);
+  const done=arr.length?arr.filter(st=>st.status==='done').length/arr.length:0;
+  return {ph,arr,baselineStart,baselineEnd,forecastStart,forecastEnd,working,done};
+ });
 }
-function clientScheduleVisual(p){
- const rows=clientPhaseRanges(p),valid=rows.flatMap(r=>[r.startDate,r.endDate].filter(Boolean)).map(parseDate);
- if(!valid.length)return `<div class="notice">The client schedule will appear after the baseline schedule is set.</div>`;
- let min=new Date(Math.min(...valid.map(d=>d.getTime()))),max=new Date(Math.max(...valid.map(d=>d.getTime())));min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);if(max-min<35*86400000)max.setDate(min.getDate()+35);const span=Math.max(1,max-min);const pct=d=>Math.max(0,Math.min(100,((parseDate(d)-min)/span)*100));const axis=Array.from({length:7},(_,i)=>{const d=new Date(min.getTime()+span*i/6);return {p:(i/6)*100,l:d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}});const tp=pct(today());
- return `<div class="client-schedule"><div class="client-schedule-inner"><div class="client-schedule-axis"><div class="client-axis-label">Full Schedule</div><div class="client-timeline-axis">${axis.map(a=>`<span class="axis-date" style="left:${a.p}%">${a.l}</span>`).join('')}<div class="client-today-line" style="left:${tp}%"></div></div><div></div></div>${rows.map(r=>{const left=r.startDate?pct(r.startDate):0,w=r.endDate?Math.max(1,pct(r.endDate)-left):1;const cls=r.done>=1?'done':p.currentPhase===r.ph.number?'current':'';return `<div class="client-sched-row"><div class="client-sched-label">Phase ${r.ph.number} · ${esc(r.ph.name)}<small>${r.working||'—'} working days scheduled</small></div><div class="client-sched-track"><div class="client-today-line" style="left:${tp}%"></div>${r.startDate?`<div class="client-sched-bar ${cls}" style="left:${left}%;width:${w}%"></div>`:''}</div><div class="client-date-range">${r.startDate?`${fmt(r.startDate)} → ${fmt(r.endDate)}`:'Dates not set'}</div></div>`}).join('')}</div></div><div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Target</span><span><i class="legend-swatch legend-forecast"></i>Current phase</span><span><i class="legend-swatch legend-complete"></i>Complete</span><span style="color:var(--rust)">│ Today</span></div>`
+function clientPhaseGantt(rows,currentPhase,interactive=true){
+ const dates=rows.flatMap(r=>[r.baselineStart,r.baselineEnd,r.forecastStart,r.forecastEnd].filter(Boolean));
+ if(!dates.length)return `<div class="notice">The client schedule will appear after the baseline schedule is set.</div>`;
+ let min=new Date(Math.min(...dates.map(d=>parseDate(d).getTime()))),max=new Date(Math.max(...dates.map(d=>parseDate(d).getTime())));
+ min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
+ const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
+ const total=Math.max(1,days.length);const grid=`180px repeat(${total},34px)`;
+ const idx=d=>Math.max(0,Math.min(total-1,Math.round((parseDate(d)-min)/86400000)));
+ const left=d=>idx(d)/total*100;const width=(a,b)=>Math.max(100/total,((idx(b)-idx(a)+1)/total)*100);
+ const todayIdx=Math.max(0,Math.min(total-1,Math.round((parseDate(today())-min)/86400000)));const todayPct=todayIdx/total*100;
+ const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
+ const bg=days.map((d,i)=>{const l=i/total*100,w=100/total;return `${d.getDay()===0||d.getDay()===6?`<div class="gantt-weekend" style="left:${l}%;width:${w}%"></div>`:''}<div class="gantt-dayline" style="left:${l}%"></div>`}).join('');
+ const rowHtml=rows.map(r=>{const b0=r.baselineStart,b1=r.baselineEnd,f0=r.forecastStart||b0,f1=r.forecastEnd||b1;if(!b0&&!f0)return'';const label=interactive?`<button type="button" class="gantt-label" onclick="showPhaseSteps(${r.ph.number})" title="View steps in this phase">Phase ${r.ph.number} · ${esc(r.ph.name)}</button>`:`<div class="gantt-label" style="cursor:default">Phase ${r.ph.number} · ${esc(r.ph.name)}</div>`;return `<div class="gantt-row" style="grid-template-columns:${grid}">${label}<div class="gantt-track" style="grid-column:2 / span ${total}">${bg}<div class="gantt-today" style="left:${todayPct}%"></div>${b0&&b1?`<div class="gantt-baseline" style="left:${left(b0)}%;width:${width(b0,b1)}%"></div>`:''}${f0&&f1?`<div class="gantt-forecast" style="left:${left(f0)}%;width:${width(f0,f1)}%"></div><div class="gantt-complete" style="left:${left(f0)}%;width:${width(f0,f1)*(r.done||0)}%"></div>`:''}</div></div>`}).join('');
+ return `<div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Baseline</span><span><i class="legend-swatch legend-forecast"></i>Forecast</span><span><i class="legend-swatch legend-complete"></i>Completed progress</span><span><i class="legend-weekend"></i>Weekend</span><span style="color:var(--rust)">│ Today</span></div><div class="gantt"><div class="gantt-inner">${axis}${rowHtml}</div></div>`;
 }
+function clientScheduleVisual(p){return clientPhaseGantt(clientPhaseRanges(p),p.currentPhase,true)}
 function clientPhaseCards(p){return `<div class="client-phase-grid">${sortedPhases().map(x=>`<div class="client-phase ${p.currentPhase===x.number?'current':''}" style="--pc:${x.color||phaseColor(x.number)}">${p.currentPhase===x.number?'<span class="current-ribbon">Current Phase</span>':''}<div class="row"><span class="phase-num" style="background:${x.color||phaseColor(x.number)};color:white">${x.number}</span><b>${esc(x.name)}</b></div><p class="small muted" style="margin:10px 0 0;line-height:1.55">${esc(x.description||'')}</p></div>`).join('')}</div>`}
 function emailEmbedHtml(p){
  const ph=phaseByNumber(p.currentPhase),latest=[...p.clientUpdates].sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0],ranges=clientPhaseRanges(p);const currentLabel=ph?`Phase ${ph.number} · ${ph.name}`:'Ready for Production';
