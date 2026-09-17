@@ -52,6 +52,9 @@ input,select,textarea{background:#fff;border-color:#ddd9d2}
 .schedule-status-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:0 0 12px;background:#f7f6f3}.schedule-status-banner>div:first-child{display:flex;flex-direction:column;gap:3px}.schedule-status-banner b{font-size:14px}.schedule-status-banner span{font-size:11px;color:var(--muted);max-width:850px}.schedule-status-number{font-weight:800;font-size:22px;line-height:1;text-align:right;white-space:nowrap}.schedule-status-number small{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;margin-top:4px;font-weight:700}.schedule-behind{background:#fff4ef;border-color:#df9f86;color:#9d4a2f}.schedule-behind span{color:#875f52}.schedule-ahead{background:#f0f6f1;border-color:#9eb7a5;color:#4f7159}.schedule-on{background:#f4f4f1;border-color:#cfcfc9;color:#5b5a55}.health-behind{background:#fff7f3!important;border-color:#e1ac98!important}.health-behind strong{color:#a14f34}.health-ahead{background:#f3f8f4!important;border-color:#a8beaE!important}.health-ahead strong{color:#4f7159}
 
 .auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f2ef}.auth-card{width:min(430px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:var(--shadow)}.auth-logo{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:24px}.auth-logo img{max-width:260px;max-height:130px;object-fit:contain}.auth-title{font-size:26px;font-weight:800;letter-spacing:-.03em}.auth-sub{color:var(--muted);font-size:13px;text-align:center}.auth-error{margin-top:12px;padding:10px 12px;border-radius:8px;background:#fff4f1;color:#934b3b;border:1px solid #e7c8bf;display:none}.sync-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#9a968e;margin-right:5px}.sync-dot.live{background:#718c78}.sync-dot.saving{background:#b99558}.sync-dot.error{background:#b16c56}.user-card{margin-top:10px;padding:10px;border:1px solid #dedbd5;border-radius:10px;background:#ebe9e5}.logout-btn{width:100%;margin-top:8px;border:1px solid #d7d3cc;background:#fff;border-radius:8px;padding:8px;text-align:left}.boot-screen{min-height:100vh;display:grid;place-items:center;color:#777;background:#f4f2ef}
+
+/* v38 exact-day Gantt alignment */
+.gantt-axis>div{min-width:42px}.gantt-track{display:grid;min-height:50px;background:#fff;position:relative}.gantt-cell{grid-row:1;min-width:42px;height:50px;border-left:1px solid #eeece7;z-index:0}.gantt-cell.weekend{background:#ededeb}.gantt-today-cell{grid-row:1;height:50px;border-left:2px solid #b66b51;z-index:4;pointer-events:none}.gantt-baseline,.gantt-forecast,.gantt-complete{position:relative;left:auto;width:auto;height:8px;border-radius:999px;z-index:3;align-self:start}.gantt-baseline{margin:13px 5px 0;background:#c5c4be}.gantt-forecast{margin:27px 5px 0;background:#55534c}.gantt-complete{margin:27px 5px 0;background:#718c78;z-index:4}.gantt-inner{min-width:max-content}.gantt-day{width:42px}.gantt-axis>div:first-child{min-width:220px}.client-portal .gantt-axis>div:first-child{min-width:180px}
 </style>
 </head>
 <body>
@@ -595,13 +598,22 @@ function scheduleBars(p){
  let min=new Date(Math.min(...dates.map(d=>d.getTime()))),max=new Date(Math.max(...dates.map(d=>d.getTime())));
  min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
- const dayMs=86400000,total=Math.max(1,days.length),pctDate=d=>{const x=parseDate(d);x.setHours(12,0,0,0);return Math.max(0,Math.min(100,((x-min)/dayMs)/total*100))};
- const barWidth=(start,end)=>{if(!start||!end)return 0;const a=parseDate(start),b=parseDate(end);a.setHours(12,0,0,0);b.setHours(12,0,0,0);return Math.max(100/total,(((b-a)/dayMs)+1)/total*100)};
- const todayPct=pctDate(today());
- const grid=`220px repeat(${total},34px)`;
+ const total=Math.max(1,days.length),dayMs=86400000;
+ const idx=d=>{if(!d)return 0;const x=parseDate(d);x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
+ const grid=`220px repeat(${total},42px)`;
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
- const bg=days.map((d,i)=>{const left=i/total*100,w=100/total;return `${d.getDay()===0||d.getDay()===6?`<div class="gantt-weekend" style="left:${left}%;width:${w}%"></div>`:''}<div class="gantt-dayline" style="left:${left}%"></div>`}).join('');
- const rows=phases.map(ph=>{const arr=projectStepsFor(p,ph.number),b=arr.filter(x=>x.baselineDate),f=arr.filter(x=>x.dueDate||x.completedDate);if(!arr.length)return'';const b0=b[0]?.baselineDate,b1=b[b.length-1]?.baselineDate;const f0=(f[0]?.completedDate||f[0]?.dueDate||b0),f1=(f[f.length-1]?.completedDate||f[f.length-1]?.dueDate||b1);const done=arr.length?arr.filter(x=>x.status==='done').length/arr.length:0;const leftB=b0?pctDate(b0):0,widthB=b1?barWidth(b0,b1):100/total,leftF=f0?pctDate(f0):leftB,widthF=f1?barWidth(f0,f1):widthB;return `<div class="gantt-row" style="grid-template-columns:${grid}"><button type="button" class="gantt-label" onclick="showPhaseSteps(${ph.number})" title="View steps in this phase" style="grid-column:1">Phase ${ph.number} · ${esc(ph.name)}</button><div class="gantt-track" style="grid-column:2 / span ${total}">${bg}<div class="gantt-today" style="left:${todayPct}%"></div><div class="gantt-baseline" style="left:${leftB}%;width:${widthB}%"></div><div class="gantt-forecast" style="left:${leftF}%;width:${widthF}%"></div><div class="gantt-complete" style="left:${leftF}%;width:${widthF*done}%"></div></div></div>`}).join('');
+ const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="grid-column:${i+1};grid-row:1"></div>`).join('');
+ const todayIndex=idx(today());
+ const range=(vals)=>{const good=vals.filter(Boolean);if(!good.length)return null;const xs=good.map(v=>parseDate(v).getTime());return {start:new Date(Math.min(...xs)),end:new Date(Math.max(...xs))}};
+ const rows=phases.map(ph=>{
+   const arr=projectStepsFor(p,ph.number);if(!arr.length)return'';
+   const br=range(arr.map(x=>x.baselineDate));
+   const fr=range(arr.map(x=>x.completedDate||x.dueDate||x.baselineDate));
+   const done=arr.length?arr.filter(x=>x.status==='done').length/arr.length:0;
+   const bStart=br?idx(br.start):0,bEnd=br?idx(br.end):bStart,fStart=fr?idx(fr.start):bStart,fEnd=fr?idx(fr.end):bEnd;
+   const bSpan=Math.max(1,bEnd-bStart+1),fSpan=Math.max(1,fEnd-fStart+1),doneSpan=Math.max(0,Math.round(fSpan*done));
+   return `<div class="gantt-row" style="grid-template-columns:${grid}"><button type="button" class="gantt-label" onclick="showPhaseSteps(${ph.number})" title="View steps in this phase" style="grid-column:1">Phase ${ph.number} · ${esc(ph.name)}</button><div class="gantt-track" style="grid-column:2 / span ${total};grid-template-columns:repeat(${total},42px)">${cells}<div class="gantt-today-cell" style="grid-column:${todayIndex+1};grid-row:1"></div>${br?`<div class="gantt-baseline" style="grid-column:${bStart+1} / span ${bSpan};grid-row:1" title="Baseline ${fmt(br.start)} – ${fmt(br.end)}"></div>`:''}${fr?`<div class="gantt-forecast" style="grid-column:${fStart+1} / span ${fSpan};grid-row:1" title="Forecast ${fmt(fr.start)} – ${fmt(fr.end)}"></div>`:''}${doneSpan?`<div class="gantt-complete" style="grid-column:${fStart+1} / span ${doneSpan};grid-row:1"></div>`:''}</div></div>`
+ }).join('');
  return `<div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Baseline</span><span><i class="legend-swatch legend-forecast"></i>Forecast</span><span><i class="legend-swatch legend-complete"></i>Completed progress</span><span><i class="legend-weekend"></i>Weekend</span><span style="color:var(--rust)">│ Today</span></div><div class="gantt"><div class="gantt-inner">${axis}${rows}</div></div>`;
 }
 function showPhaseSteps(phaseNumber){const p=currentProject(),ph=phaseByNumber(phaseNumber),steps=projectStepsFor(p,phaseNumber);if(!ph)return;modal(`<div class="row between"><div><div class="section-title">Phase ${ph.number}</div><h2 style="margin:4px 0 2px">${esc(ph.name)}</h2><div class="small muted">${steps.length} step${steps.length===1?'':'s'} in this phase</div></div></div><div style="margin-top:14px">${steps.map((st,i)=>{const ass=resolveAssignee(st);const status=st.status==='done'?'Complete':st.status==='working'?'In Progress':'Not Started';return `<div class="note-item" style="margin-bottom:8px"><div class="row between" style="gap:12px"><div><b>${i+1}. ${esc(st.title)}</b><div class="tiny muted" style="margin-top:3px">${esc(st.role||'')} · ${esc(ass||'Unassigned')}</div></div><span class="chip ${st.status==='done'?'good':st.status==='working'?'warn':''}">${status}</span></div><div class="tiny muted" style="margin-top:7px">Baseline ${fmt(st.baselineDate)} · Forecast ${fmt(st.dueDate)}</div></div>`}).join('')}</div><div class="modal-actions"><button class="btn dark" onclick="closeModal()">Done</button></div>`)}
@@ -737,30 +749,26 @@ function deleteMeeting(id){if(!confirm('Delete this meeting note?'))return;curre
 function clientPhaseRanges(p){
  return sortedPhases().map(ph=>{
   const arr=projectStepsFor(p,ph.number);
-  const b=arr.filter(st=>st.baselineDate);
-  const f=arr.filter(st=>st.completedDate||st.dueDate||st.baselineDate);
-  const baselineStart=b[0]?.baselineDate||'';
-  const baselineEnd=b[b.length-1]?.baselineDate||'';
-  const forecastStart=f[0]?(f[0].completedDate||f[0].dueDate||f[0].baselineDate):baselineStart;
-  const forecastEnd=f[f.length-1]?(f[f.length-1].completedDate||f[f.length-1].dueDate||f[f.length-1].baselineDate):baselineEnd;
+  const minmax=(vals)=>{const good=vals.filter(Boolean);if(!good.length)return {start:'',end:''};const xs=good.map(v=>parseDate(v).getTime());return {start:iso(new Date(Math.min(...xs))),end:iso(new Date(Math.max(...xs)))}};
+  const b=minmax(arr.map(st=>st.baselineDate));
+  const f=minmax(arr.map(st=>st.completedDate||st.dueDate||st.baselineDate));
   const working=arr.reduce((n,st)=>n+(Number((allTemplateSteps().find(x=>x.step.id===st.templateStepId)?.step.duration)||0)),0);
   const done=arr.length?arr.filter(st=>st.status==='done').length/arr.length:0;
-  return {ph,arr,baselineStart,baselineEnd,forecastStart,forecastEnd,working,done};
+  return {ph,arr,baselineStart:b.start,baselineEnd:b.end,forecastStart:f.start||b.start,forecastEnd:f.end||b.end,working,done};
  });
 }
 function clientPhaseGantt(rows,currentPhase,interactive=true){
  const dates=rows.flatMap(r=>[r.baselineStart,r.baselineEnd,r.forecastStart,r.forecastEnd].filter(Boolean));
  if(!dates.length)return `<div class="notice">The client schedule will appear after the baseline schedule is set.</div>`;
  let min=new Date(Math.min(...dates.map(d=>parseDate(d).getTime()))),max=new Date(Math.max(...dates.map(d=>parseDate(d).getTime())));
- min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
+ min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
- const total=Math.max(1,days.length);const grid=`180px repeat(${total},34px)`;
- const idx=d=>Math.max(0,Math.min(total-1,Math.round((parseDate(d)-min)/86400000)));
- const left=d=>idx(d)/total*100;const width=(a,b)=>Math.max(100/total,((idx(b)-idx(a)+1)/total)*100);
- const todayIdx=Math.max(0,Math.min(total-1,Math.round((parseDate(today())-min)/86400000)));const todayPct=todayIdx/total*100;
+ const total=Math.max(1,days.length),dayMs=86400000,grid=`180px repeat(${total},42px)`;
+ const idx=d=>{if(!d)return 0;const x=parseDate(d);x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
- const bg=days.map((d,i)=>{const l=i/total*100,w=100/total;return `${d.getDay()===0||d.getDay()===6?`<div class="gantt-weekend" style="left:${l}%;width:${w}%"></div>`:''}<div class="gantt-dayline" style="left:${l}%"></div>`}).join('');
- const rowHtml=rows.map(r=>{const b0=r.baselineStart,b1=r.baselineEnd,f0=r.forecastStart||b0,f1=r.forecastEnd||b1;if(!b0&&!f0)return'';const label=interactive?`<button type="button" class="gantt-label" onclick="showPhaseSteps(${r.ph.number})" title="View steps in this phase">Phase ${r.ph.number} · ${esc(r.ph.name)}</button>`:`<div class="gantt-label" style="cursor:default">Phase ${r.ph.number} · ${esc(r.ph.name)}</div>`;return `<div class="gantt-row" style="grid-template-columns:${grid}">${label}<div class="gantt-track" style="grid-column:2 / span ${total}">${bg}<div class="gantt-today" style="left:${todayPct}%"></div>${b0&&b1?`<div class="gantt-baseline" style="left:${left(b0)}%;width:${width(b0,b1)}%"></div>`:''}${f0&&f1?`<div class="gantt-forecast" style="left:${left(f0)}%;width:${width(f0,f1)}%"></div><div class="gantt-complete" style="left:${left(f0)}%;width:${width(f0,f1)*(r.done||0)}%"></div>`:''}</div></div>`}).join('');
+ const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="grid-column:${i+1};grid-row:1"></div>`).join('');
+ const todayIndex=idx(today());
+ const rowHtml=rows.map(r=>{const b0=r.baselineStart,b1=r.baselineEnd,f0=r.forecastStart||b0,f1=r.forecastEnd||b1;if(!b0&&!f0)return'';const bStart=idx(b0),bEnd=idx(b1),fStart=idx(f0),fEnd=idx(f1),bSpan=Math.max(1,bEnd-bStart+1),fSpan=Math.max(1,fEnd-fStart+1),doneSpan=Math.max(0,Math.round(fSpan*(r.done||0)));const label=interactive?`<button type="button" class="gantt-label" onclick="showPhaseSteps(${r.ph.number})" title="View steps in this phase">Phase ${r.ph.number} · ${esc(r.ph.name)}</button>`:`<div class="gantt-label" style="cursor:default">Phase ${r.ph.number} · ${esc(r.ph.name)}</div>`;return `<div class="gantt-row" style="grid-template-columns:${grid}">${label}<div class="gantt-track" style="grid-column:2 / span ${total};grid-template-columns:repeat(${total},42px)">${cells}<div class="gantt-today-cell" style="grid-column:${todayIndex+1};grid-row:1"></div>${b0&&b1?`<div class="gantt-baseline" style="grid-column:${bStart+1} / span ${bSpan};grid-row:1"></div>`:''}${f0&&f1?`<div class="gantt-forecast" style="grid-column:${fStart+1} / span ${fSpan};grid-row:1"></div>`:''}${doneSpan?`<div class="gantt-complete" style="grid-column:${fStart+1} / span ${doneSpan};grid-row:1"></div>`:''}</div></div>`}).join('');
  return `<div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Baseline</span><span><i class="legend-swatch legend-forecast"></i>Forecast</span><span><i class="legend-swatch legend-complete"></i>Completed progress</span><span><i class="legend-weekend"></i>Weekend</span><span style="color:var(--rust)">│ Today</span></div><div class="gantt"><div class="gantt-inner">${axis}${rowHtml}</div></div>`;
 }
 function clientScheduleVisual(p){return clientPhaseGantt(clientPhaseRanges(p),p.currentPhase,true)}
