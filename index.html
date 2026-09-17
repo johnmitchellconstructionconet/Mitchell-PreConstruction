@@ -309,6 +309,11 @@ async function bootAuthenticated(){
  try{await loadSharedState();await subscribeRealtime();booted=true;render();}catch(err){console.error(err);renderLogin('Could not load the shared workspace. Make sure the Supabase multi-user migration has been run.');}
 }
 async function bootApp(){
+ const clientToken=clientPortalTokenFromUrl();
+ if(clientToken){
+  await bootPublicClient(clientToken);
+  return;
+ }
  const {data:{session}}=await sb.auth.getSession();
  if(!session){renderLogin();return}
  authUser=session.user;await bootAuthenticated();
