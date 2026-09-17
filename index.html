@@ -55,6 +55,9 @@ input,select,textarea{background:#fff;border-color:#ddd9d2}
 
 /* v38 exact-day Gantt alignment */
 .gantt-axis>div{min-width:42px}.gantt-track{min-height:50px;background:#fff;position:relative;overflow:hidden}.gantt-cell{position:absolute;top:0;bottom:0;width:42px;border-left:1px solid #eeece7;box-sizing:border-box;z-index:0}.gantt-cell.weekend{background:#ededeb}.gantt-today-cell{position:absolute;top:0;bottom:0;width:2px;background:#b66b51;z-index:5;pointer-events:none}.gantt-baseline,.gantt-forecast,.gantt-complete{position:absolute;height:8px;border-radius:999px;z-index:3;margin:0}.gantt-baseline{top:13px;background:#c5c4be}.gantt-forecast{top:27px;background:#55534c}.gantt-complete{top:27px;background:#718c78;z-index:4}.gantt-inner{min-width:max-content}.gantt-day{width:42px}.gantt-axis>div:first-child{min-width:220px}.client-portal .gantt-axis>div:first-child{min-width:180px}
+
+/* v41 cell-rendered Gantt: bars are rendered inside exact day cells */
+.gantt-track-grid{display:grid;min-height:50px;position:relative}.gantt-slot{position:relative;height:50px;border-left:1px solid #eeece7;box-sizing:border-box;background:#fff}.gantt-slot.weekend{background:#ededeb}.gantt-slot.today:after{content:"";position:absolute;top:0;bottom:0;right:0;width:2px;background:#b66b51;z-index:6}.slotbar{position:absolute;left:0;right:0;height:8px;z-index:3}.slotbar.baseline{top:13px;background:#c5c4be}.slotbar.forecast{top:27px;background:#55534c}.slotbar.complete{top:27px;background:#718c78;z-index:4}.slotbar.start{left:4px;border-radius:999px 0 0 999px}.slotbar.end{right:4px;border-radius:0 999px 999px 0}.slotbar.start.end{border-radius:999px}.gantt-row>.gantt-label{grid-column:1}.client-portal .gantt-track-grid{min-height:50px}
 </style>
 </head>
 <body>
@@ -592,27 +595,35 @@ function extendCurrentPhase(){const p=currentProject();const n=Number(prompt('Ho
 function scheduleHealth(p){const baseDays=p.baselineStart&&p.baselineReady?daysBetween(p.baselineStart,p.baselineReady):null;const foreReady=forecastReady(p);const foreDays=p.baselineStart&&foreReady?daysBetween(p.baselineStart,foreReady):null;const variance=scheduleVarianceDays(p);const forecastStart=computedForecastConstructionStart(p);const statusClass=variance>0?'schedule-behind':variance<0?'schedule-ahead':'schedule-on';const statusText=variance>0?`Behind schedule by ${variance} day${variance===1?'':'s'}`:variance<0?`Ahead of schedule by ${Math.abs(variance)} day${Math.abs(variance)===1?'':'s'}`:'On schedule';const active=currentStep(p);const detail=variance>0&&active?`${active.title} is currently tracking later than its frozen baseline date. Remaining forecast dates and the projected construction start move with this variance.`:variance<0&&active?`${active.title} is tracking ahead of its frozen baseline. Remaining forecast dates and the projected construction start have moved forward.`:'Forecast currently matches the frozen baseline.';return `<div class="schedule-status-banner ${statusClass}"><div><b>${statusText}</b><span>${esc(detail)}</span></div><div class="schedule-status-number">${variance===0?'0':variance>0?`+${variance}`:`${variance}`}<small>days</small></div></div><div class="schedule-health"><div class="health-box"><label>Original Target Start</label><input type="date" value="${p.targetStart||''}" onchange="setProjectField('targetStart',this.value)"></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Forecast Construction Start</label><strong>${fmt(forecastStart)}</strong><span class="tiny muted">Moves automatically with schedule variance</span></div><div class="health-box"><label>Baseline Ready</label><strong>${fmt(p.baselineReady)}</strong></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Forecast Ready</label><strong>${fmt(foreReady)}</strong></div><div class="health-box"><label>Total Baseline Days</label><strong>${baseDays??'—'}</strong></div><div class="health-box"><label>Total Forecast Days</label><strong>${foreDays??'—'}</strong></div><div class="health-box ${variance>0?'health-behind':variance<0?'health-ahead':''}"><label>Variance</label><strong>${esc(varianceLabel(p))}</strong></div></div><div class="row" style="margin-bottom:10px"><button class="btn small" onclick="extendCurrentPhase()">Extend Current Phase</button><button class="btn small danger" onclick="showBaselineModal(true)">Reset Baseline</button></div>`}
 function scheduleBars(p){
  const phases=sortedPhases();
- const dates=[];
- phases.forEach(ph=>projectStepsFor(p,ph.number).forEach(st=>{if(st.baselineDate)dates.push(parseDate(st.baselineDate));if(st.dueDate)dates.push(parseDate(st.dueDate));if(st.completedDate)dates.push(parseDate(st.completedDate))}));
- if(!dates.length)return `<div class="notice">Set a baseline to populate the phase Gantt chart.</div>`;
- let min=new Date(Math.min(...dates.map(d=>d.getTime()))),max=new Date(Math.max(...dates.map(d=>d.getTime())));
- min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
+ const rawDates=[];
+ phases.forEach(ph=>projectStepsFor(p,ph.number).forEach(st=>{if(st.baselineDate)rawDates.push(st.baselineDate);if(st.dueDate)rawDates.push(st.dueDate);if(st.completedDate)rawDates.push(st.completedDate)}));
+ if(!rawDates.length)return `<div class="notice">Set a baseline to populate the phase Gantt chart.</div>`;
+ const normalize=v=>{const d=v instanceof Date?new Date(v):parseDate(v);if(!d||Number.isNaN(d.getTime()))return null;d.setHours(12,0,0,0);return d};
+ const valid=rawDates.map(normalize).filter(Boolean);
+ let min=new Date(Math.min(...valid.map(d=>d.getTime()))),max=new Date(Math.max(...valid.map(d=>d.getTime())));
+ min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
- const total=Math.max(1,days.length),dayMs=86400000;
- const idx=d=>{if(!d)return 0;const x=d instanceof Date?new Date(d):parseDate(d);if(!x||Number.isNaN(x.getTime()))return 0;x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
+ const total=days.length, dayMs=86400000;
+ const idx=v=>{const d=normalize(v);if(!d)return -1;return Math.max(0,Math.min(total-1,Math.round((d-min)/dayMs)))};
  const grid=`220px repeat(${total},42px)`;
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
- const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="left:${i*42}px"></div>`).join('');
- const todayIndex=idx(today());
- const range=(vals)=>{const good=vals.filter(Boolean);if(!good.length)return null;const xs=good.map(v=>parseDate(v).getTime());return {start:new Date(Math.min(...xs)),end:new Date(Math.max(...xs))}};
+ const range=vals=>{const a=vals.map(normalize).filter(Boolean);if(!a.length)return null;return {start:new Date(Math.min(...a.map(d=>d.getTime()))),end:new Date(Math.max(...a.map(d=>d.getTime())))}};
+ const todayIdx=idx(today());
  const rows=phases.map(ph=>{
-   const arr=projectStepsFor(p,ph.number);if(!arr.length)return'';
+   const arr=projectStepsFor(p,ph.number); if(!arr.length)return '';
    const br=range(arr.map(x=>x.baselineDate));
    const fr=range(arr.map(x=>x.completedDate||x.dueDate||x.baselineDate));
-   const done=arr.length?arr.filter(x=>x.status==='done').length/arr.length:0;
-   const bStart=br?idx(br.start):0,bEnd=br?idx(br.end):bStart,fStart=fr?idx(fr.start):bStart,fEnd=fr?idx(fr.end):bEnd;
-   const bSpan=Math.max(1,bEnd-bStart+1),fSpan=Math.max(1,fEnd-fStart+1),doneSpan=Math.max(0,Math.round(fSpan*done));
-   return `<div class="gantt-row" style="grid-template-columns:${grid}"><button type="button" class="gantt-label" onclick="showPhaseSteps(${ph.number})" title="View steps in this phase" style="grid-column:1">Phase ${ph.number} · ${esc(ph.name)}</button><div class="gantt-track" style="grid-column:2 / span ${total};width:${total*42}px">${cells}<div class="gantt-today-cell" style="left:${todayIndex*42}px"></div>${br?`<div class="gantt-baseline" style="left:${bStart*42+4}px;width:${Math.max(6,bSpan*42-8)}px" title="Baseline ${fmt(br.start)} – ${fmt(br.end)}"></div>`:''}${fr?`<div class="gantt-forecast" style="left:${fStart*42+4}px;width:${Math.max(6,fSpan*42-8)}px" title="Forecast ${fmt(fr.start)} – ${fmt(fr.end)}"></div>`:''}${doneSpan?`<div class="gantt-complete" style="left:${fStart*42+4}px;width:${Math.max(6,doneSpan*42-8)}px"></div>`:''}</div></div>`
+   const doneRatio=arr.length?arr.filter(x=>x.status==='done').length/arr.length:0;
+   const b0=br?idx(br.start):-1,b1=br?idx(br.end):-1,f0=fr?idx(fr.start):-1,f1=fr?idx(fr.end):-1;
+   const completedEnd=fr&&doneRatio>0 ? Math.min(f1, f0 + Math.max(0,Math.round((f1-f0+1)*doneRatio)-1)) : -1;
+   const slots=days.map((d,i)=>{
+     const weekend=d.getDay()===0||d.getDay()===6;
+     const base=i>=b0&&i<=b1&&b0>=0;
+     const fore=i>=f0&&i<=f1&&f0>=0;
+     const comp=i>=f0&&i<=completedEnd&&completedEnd>=f0;
+     return `<div class="gantt-slot ${weekend?'weekend':''} ${i===todayIdx?'today':''}">${base?`<i class="slotbar baseline ${i===b0?'start':''} ${i===b1?'end':''}"></i>`:''}${fore?`<i class="slotbar forecast ${i===f0?'start':''} ${i===f1?'end':''}"></i>`:''}${comp?`<i class="slotbar complete ${i===f0?'start':''} ${i===completedEnd?'end':''}"></i>`:''}</div>`
+   }).join('');
+   return `<div class="gantt-row" style="grid-template-columns:${grid}"><button type="button" class="gantt-label" onclick="showPhaseSteps(${ph.number})" title="View steps in this phase">Phase ${ph.number} · ${esc(ph.name)}</button><div class="gantt-track-grid" style="grid-column:2 / span ${total};grid-template-columns:repeat(${total},42px)">${slots}</div></div>`;
  }).join('');
  return `<div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Baseline</span><span><i class="legend-swatch legend-forecast"></i>Forecast</span><span><i class="legend-swatch legend-complete"></i>Completed progress</span><span><i class="legend-weekend"></i>Weekend</span><span style="color:var(--rust)">│ Today</span></div><div class="gantt"><div class="gantt-inner">${axis}${rows}</div></div>`;
 }
@@ -758,17 +769,16 @@ function clientPhaseRanges(p){
  });
 }
 function clientPhaseGantt(rows,currentPhase,interactive=true){
- const dates=rows.flatMap(r=>[r.baselineStart,r.baselineEnd,r.forecastStart,r.forecastEnd].filter(Boolean));
- if(!dates.length)return `<div class="notice">The client schedule will appear after the baseline schedule is set.</div>`;
- let min=new Date(Math.min(...dates.map(d=>parseDate(d).getTime()))),max=new Date(Math.max(...dates.map(d=>parseDate(d).getTime())));
- min.setHours(12,0,0,0);max.setHours(12,0,0,0);min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
+ const normalize=v=>{const d=v instanceof Date?new Date(v):parseDate(v);if(!d||Number.isNaN(d.getTime()))return null;d.setHours(12,0,0,0);return d};
+ const vals=[];rows.forEach(r=>[r.baselineStart,r.baselineEnd,r.forecastStart,r.forecastEnd].forEach(v=>{if(v)vals.push(v)}));
+ if(!vals.length)return `<div class="notice">Schedule dates have not been set yet.</div>`;
+ const valid=vals.map(normalize).filter(Boolean); let min=new Date(Math.min(...valid.map(d=>d.getTime()))),max=new Date(Math.max(...valid.map(d=>d.getTime())));min.setDate(min.getDate()-2);max.setDate(max.getDate()+2);
  const days=[];for(let d=new Date(min);d<=max;d.setDate(d.getDate()+1))days.push(new Date(d));
- const total=Math.max(1,days.length),dayMs=86400000,grid=`180px repeat(${total},42px)`;
- const idx=d=>{if(!d)return 0;const x=d instanceof Date?new Date(d):parseDate(d);if(!x||Number.isNaN(x.getTime()))return 0;x.setHours(12,0,0,0);return Math.max(0,Math.min(total-1,Math.round((x-min)/dayMs)))};
+ const total=days.length,dayMs=86400000; const idx=v=>{const d=normalize(v);if(!d)return -1;return Math.max(0,Math.min(total-1,Math.round((d-min)/dayMs)))};
+ const grid=`180px repeat(${total},42px)`;
  const axis=`<div class="gantt-axis" style="grid-template-columns:${grid}"><div>Phase</div>${days.map(d=>`<div class="gantt-day ${d.getDay()===0||d.getDay()===6?'weekend':''}"><div class="dow">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]}</div><div class="md">${d.getMonth()+1}/${d.getDate()}</div></div>`).join('')}</div>`;
- const cells=days.map((d,i)=>`<div class="gantt-cell ${d.getDay()===0||d.getDay()===6?'weekend':''}" style="left:${i*42}px"></div>`).join('');
- const todayIndex=idx(today());
- const rowHtml=rows.map(r=>{const b0=r.baselineStart,b1=r.baselineEnd,f0=r.forecastStart||b0,f1=r.forecastEnd||b1;if(!b0&&!f0)return'';const bStart=idx(b0),bEnd=idx(b1),fStart=idx(f0),fEnd=idx(f1),bSpan=Math.max(1,bEnd-bStart+1),fSpan=Math.max(1,fEnd-fStart+1),doneSpan=Math.max(0,Math.round(fSpan*(r.done||0)));const label=interactive?`<button type="button" class="gantt-label" onclick="showPhaseSteps(${r.ph.number})" title="View steps in this phase">Phase ${r.ph.number} · ${esc(r.ph.name)}</button>`:`<div class="gantt-label" style="cursor:default">Phase ${r.ph.number} · ${esc(r.ph.name)}</div>`;return `<div class="gantt-row" style="grid-template-columns:${grid}">${label}<div class="gantt-track" style="grid-column:2 / span ${total};width:${total*42}px">${cells}<div class="gantt-today-cell" style="left:${todayIndex*42}px"></div>${b0&&b1?`<div class="gantt-baseline" style="left:${bStart*42+4}px;width:${Math.max(6,bSpan*42-8)}px"></div>`:''}${f0&&f1?`<div class="gantt-forecast" style="left:${fStart*42+4}px;width:${Math.max(6,fSpan*42-8)}px"></div>`:''}${doneSpan?`<div class="gantt-complete" style="left:${fStart*42+4}px;width:${Math.max(6,doneSpan*42-8)}px"></div>`:''}</div></div>`}).join('');
+ const todayIdx=idx(today());
+ const rowHtml=rows.map(r=>{const b0=idx(r.baselineStart),b1=idx(r.baselineEnd),f0=idx(r.forecastStart||r.baselineStart),f1=idx(r.forecastEnd||r.baselineEnd);const doneEnd=(f0>=0&&f1>=f0&&r.done>0)?Math.min(f1,f0+Math.max(0,Math.round((f1-f0+1)*r.done)-1)):-1;const label=interactive?`<button type="button" class="gantt-label" onclick="showPhaseSteps(${r.ph.number})">Phase ${r.ph.number} · ${esc(r.ph.name)}</button>`:`<div class="gantt-label" style="cursor:default">Phase ${r.ph.number} · ${esc(r.ph.name)}</div>`;const slots=days.map((d,i)=>{const weekend=d.getDay()===0||d.getDay()===6,base=b0>=0&&i>=b0&&i<=b1,fore=f0>=0&&i>=f0&&i<=f1,comp=doneEnd>=f0&&i>=f0&&i<=doneEnd;return `<div class="gantt-slot ${weekend?'weekend':''} ${i===todayIdx?'today':''}">${base?`<i class="slotbar baseline ${i===b0?'start':''} ${i===b1?'end':''}"></i>`:''}${fore?`<i class="slotbar forecast ${i===f0?'start':''} ${i===f1?'end':''}"></i>`:''}${comp?`<i class="slotbar complete ${i===f0?'start':''} ${i===doneEnd?'end':''}"></i>`:''}</div>`}).join('');return `<div class="gantt-row" style="grid-template-columns:${grid}">${label}<div class="gantt-track-grid" style="grid-column:2 / span ${total};grid-template-columns:repeat(${total},42px)">${slots}</div></div>`}).join('');
  return `<div class="gantt-legend"><span><i class="legend-swatch legend-baseline"></i>Baseline</span><span><i class="legend-swatch legend-forecast"></i>Forecast</span><span><i class="legend-swatch legend-complete"></i>Completed progress</span><span><i class="legend-weekend"></i>Weekend</span><span style="color:var(--rust)">│ Today</span></div><div class="gantt"><div class="gantt-inner">${axis}${rowHtml}</div></div>`;
 }
 function clientScheduleVisual(p){return clientPhaseGantt(clientPhaseRanges(p),p.currentPhase,true)}
