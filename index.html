@@ -1,9 +1,3 @@
-
-
-
-
-
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -119,6 +113,9 @@ button.brand-logo:hover{border-color:#766c5d;background:#eae6df;color:#292623}
 .project-task-item .status-select{align-self:center}
 .project-task-empty{margin:0 16px;padding:19px 0 21px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 @media(max-width:380px){.project-task-item{grid-template-columns:40px minmax(0,1fr)}.project-task-item .status-select{grid-column:2;justify-self:start;margin-left:-6px}}
+
+dialog:has(.document-preview){width:min(980px,calc(100% - 24px))}
+.document-preview .file-preview{display:block;height:62vh}
 
 :root{--brand-canvas:#f5f1ea;--brand-paper:#fffdf9;--brand-ink:#313131;--brand-muted:#655c51;--brand-line:#ded5c8;--brand-primary:#313131;--brand-dark:#252424;--brand-hover:#47413a;--brand-soft:#f1e8da;--brand-accent:#b08d57;--brand-highlight:#e7c894;--brand-goldInk:#78582e;--brand-white:#ffffff}
 .client-page{margin:0;background:var(--brand-canvas);color:var(--brand-ink)}
@@ -788,6 +785,13 @@ const documentSections = {
 function canShareDocument(section) {
   return section!=='Task attachment' && section!==documentSections.bidding.title;
 }
+const previewDocumentTypes = {pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif',avif:'image/avif'};
+function documentPreviewType(file) {
+  if (Object.values(previewDocumentTypes).includes(file.type)) return file.type;
+  if (file.type && file.type!=='application/octet-stream') return '';
+  const extension=file.name?.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
+  return Object.hasOwn(previewDocumentTypes,extension)?previewDocumentTypes[extension]:'';
+}
 const reservedDocumentTags = new Set(['all','untagged']);
 function documentSectionKey(section) {
   return Object.keys(documentSections).find(key=>documentSections[key].title===section);
@@ -1234,7 +1238,6 @@ const companyDefaults = {
 const siteAssets = {};
 const allowedKinds = ['task','clarification','round','bid','estimate','meeting','update','file'];
 const docSections = [...Object.values(documentSections).map(section=>section.title),'Task attachment'];
-const safeInline = new Set(['application/pdf','image/jpeg','image/png','image/webp','image/gif','image/avif']);
 const recordFields = {
   task: {title:200,assignee:200,due:'date',status:'status'},
   round: {title:200,audience:60},
@@ -1413,20 +1416,53 @@ async function download(request,env,url,id) {
   await projectFrom(env,record.projectId);
   return serveDocument(request,env,url,record);
 }
+function documentLink(value) {
+  const link=linkValue(value);
+  if (link) {
+    const {username,password}=new URL(link);
+    requireValue(!username&&!password,'Use a document link without embedded credentials.');
+  }
+  return link;
+}
+async function addDocumentLink(request,env,user) {
+  const input=await readBody(request);
+  const projectId=recordId(input.projectId);
+  await projectFrom(env,projectId);
+  const section=cleanText(input.section);
+  requireValue(documentSectionKey(section),'Choose a document section.');
+  const linkUrl=documentLink(input.linkUrl);
+  requireValue(linkUrl,'Enter a document link.');
+  const title=cleanText(input.title);
+  requireValue(title,'Enter a title.');
+  const tags=await fileTagFields(env,section,input.tagId,input.category);
+  const data={...tags,title,name:title,linkUrl,section,date:optionalDate(input.date)||today(),clientVisible:false};
+  return json(await writeRecord(env,{id:crypto.randomUUID(),kind:'file',projectId,data,actor:user.name}),201);
+}
+async function updateDocument(env,original,input) {
+  const data=fieldsOnly(original);
+  if ('clientVisible' in input) data.clientVisible=input.clientVisible===true&&canShareDocument(original.section);
+  if (input.tagId!==undefined||input.category!==undefined) Object.assign(data,await fileTagFields(env,original.section,input.tagId,input.category));
+  if ('linkUrl' in input) {
+    data.linkUrl=documentLink(input.linkUrl);
+    requireValue(original.key||data.linkUrl,'Enter a document link.');
+  }
+  return data;
+}
 async function serveDocument(request,env,url,record,client=false) {
-  const body = await env.BUCKET.get(record.key);
+  const body = record.key?await env.BUCKET.get(record.key):null;
   if (!body) {
     if (client) return clientPageResponse(null,404);
     throw new UserError('File was not found.',404);
   }
-  const inline = safeInline.has(record.type) && !url.searchParams.has('download');
+  const type = documentPreviewType(record);
+  const inline = type && !url.searchParams.has('download');
   const name = encodeURIComponent(record.name).replace(/['()*]/g,c => '%'+c.charCodeAt(0).toString(16));
   return new Response(request.method==='HEAD'?null:body.body,{headers:{
     ...(client?clientPageHeaders:{}),
-    'Content-Type':inline ? record.type : 'application/octet-stream',
+    'Content-Type':inline ? type : 'application/octet-stream',
     'Content-Disposition':(inline ? 'inline' : 'attachment') + "; filename*=UTF-8''" + name,
     'X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store',
-    'Content-Security-Policy':"default-src 'none'; sandbox"
+    'Content-Security-Policy':inline ? "default-src 'none'" : "default-src 'none'; sandbox"
   }});
 }
 const logoLimit=2*1024*1024;
@@ -1559,7 +1595,7 @@ async function sharedClientPage(request,env,url) {
     env.DB.prepare("SELECT * FROM records WHERE project_id=? AND kind='file' AND json_extract(data,'$.removed') IS NOT 1 AND json_extract(data,'$.clientVisible') IS 1 AND json_extract(data,'$.section')!='Task attachment' ORDER BY updated_at DESC").bind(id).all()
   ]);
   const documents=files.results.map(normalized).filter(file=>canShareDocument(file.section))
-    .map(file=>({title:file.title,name:file.name,url:'/p/'+id+'/'+token+'/files/'+file.id}));
+    .map(file=>({title:file.title,name:file.name,url:file.key?'/p/'+id+'/'+token+'/files/'+file.id:file.linkUrl}));
   const payload=clientProjection(project,projectSummary(project),settings,rows.results.map(row=>JSON.parse(row.data)),documents);
   const logoUrl=logo?.key?'/p/'+id+'/'+token+'/logo':'';
   return clientPageResponse('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
@@ -1669,12 +1705,13 @@ async function handleApi(request,env,url) {
       requireValue(!active.total,'Remove the clarification items in this round first.');
     }
     const data = method === 'DELETE' ? {...fieldsOnly(original),removed:true} :
-      input.kind === 'file' ? {...fieldsOnly(original),...('clientVisible' in input?{clientVisible:input.clientVisible===true && canShareDocument(original.section)}:{}), ...(input.tagId!==undefined || input.category!==undefined?await fileTagFields(env,original.section,input.tagId,input.category):{})} :
+      input.kind === 'file' ? await updateDocument(env,original,input) :
       normalRecord(input.kind,input,original,settings);
     if (original.kind === 'clarification') data.roundId = original.roundId;
     return json(await writeRecord(env,{id,kind:original.kind,projectId:original.projectId,data,actor:user.name,version:bodyVersion(input.version)}));
   }
   if (route === 'files' && !id && method === 'POST') return upload(request,env,user);
+  if (route === 'files' && id === 'link' && method === 'POST') return addDocumentLink(request,env,user);
   if (route === 'files' && id && method === 'GET') return download(request,env,url,id);
   return json({error:'This page was not found.'},404);
 }
@@ -1714,7 +1751,6 @@ return {
 <script>
 function sqliteStorage(sqlite, schema, initOptions) {
   const bytesKey = 'workspace';
-  const allowedPreviews = new Set(['application/pdf','image/png','image/jpeg','image/webp','image/gif','image/avif']);
   const files = new Map();
   const objectUrls = new Map();
   const pendingFiles = new Map();
@@ -1838,10 +1874,11 @@ function sqliteStorage(sqlite, schema, initOptions) {
     const record=JSON.parse(row);
     const blob=files.get(record.key);
     if (!blob||record.removed) return '';
-    if (!download && !allowedPreviews.has(record.type)) download=true;
+    const type=documentPreviewType(record);
+    if (!type) download=true;
     const variant=record.key+(download?'-download':'-preview');
     if (!objectUrls.has(variant)) {
-      const safe=blob.slice(0,blob.size,download?'application/octet-stream':record.type);
+      const safe=blob.slice(0,blob.size,download?'application/octet-stream':type);
       objectUrls.set(variant,URL.createObjectURL(safe));
     }
     return objectUrls.get(variant);
@@ -1904,10 +1941,7 @@ const localWorkspace=(()=>{
     recordFileUrl(...args){return workspace?.recordFileUrl(...args)??'';}
   };
 })();
-function localDownloadLink(file,label,classes=''){
-  const url=localWorkspace.recordFileUrl(file.id,true);
-  return url?'<a class="'+esc(classes)+'" href="'+esc(url)+'" download="'+esc(file.name)+'">'+esc(label)+'</a>':'';
-}
+
 
 </script>
 <script>
@@ -2263,6 +2297,13 @@ const documentSections = {
 };
 function canShareDocument(section) {
   return section!=='Task attachment' && section!==documentSections.bidding.title;
+}
+const previewDocumentTypes = {pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif',avif:'image/avif'};
+function documentPreviewType(file) {
+  if (Object.values(previewDocumentTypes).includes(file.type)) return file.type;
+  if (file.type && file.type!=='application/octet-stream') return '';
+  const extension=file.name?.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
+  return Object.hasOwn(previewDocumentTypes,extension)?previewDocumentTypes[extension]:'';
 }
 const reservedDocumentTags = new Set(['all','untagged']);
 function documentSectionKey(section) {
@@ -2764,7 +2805,7 @@ function clientView(project,summary) {
     '<div class="client-share-actions">'+button('Add client update','item-new',{kind:'update'})+button('Add preview file','client-file-upload')+button('Print client view','print-client')+'</div>'),'','client-sharing');
   const logoUrl=state.workspace.branding?.hasLogo?localWorkspace.recordFileUrl('company-logo'):'';
   const documents=items('file').filter(file=>file.clientVisible&&canShareDocument(file.section))
-    .map(file=>({title:file.title,name:file.name,url:localWorkspace.recordFileUrl(file.id)}));
+    .map(file=>({title:file.title,name:file.name,url:documentUrl(file)}));
   return '<div class="stack">'+share+renderClientPortal(clientProjection(project,summary,state.workspace.settings,items('update'),documents),{logoUrl})+'</div>';
 }
 function roundList(){return [{id:'default',title:'1st Round',audience:'Client'},...items('round').sort((a,b)=>a.title.localeCompare(b.title))];}
@@ -2799,18 +2840,27 @@ function fileView(section) {
   const link=section==='Plans & Design'?panel('GoVisually',pad(open?'<a href="'+esc(open)+'" target="_blank" rel="noopener noreferrer">Open GoVisually project</a>':'<p class="muted">Add a GoVisually link to open your project’s plan markups.</p>'),button('Edit link','govisually')):'';
   const folder='<div class="stack">'+(bidding?googleSheetView(selectedProject()):link)+'<div class="filters">'+filters.map(tag=>button(tag.label,'category-filter',{...(tag.id===null?{}:{tag:tag.id}),style:active===tag.id?'primary':''})).join('')+(state.workspace.user.admin?button('Manage tags','manage-file-tags',{section,icon:'settings'}):'')+'</div>'+
     panel(section==='Plans & Design'?'Finalized plans & drawings':bidding?'Bidding files':section,shown.length?pad('<div class="card-grid">'+shown.map(file=>fileCard(file,effectiveDocumentTag(file,tags)?.label || 'Untagged')).join('')+'</div>'):
-      empty('No files in this view','Upload a file or choose a different category.','','file'),button('Upload files','upload',{section,style:'primary',icon:'plus'}))+'</div>';
+      empty('No documents in this view','Upload a file, add a link, or choose a different tag.','','file'),
+      button('Add document link','add-document-link',{section})+button('Upload files','upload',{section,style:'primary',icon:'plus'}))+'</div>';
   return folder;
 }
+function documentUrl(file,download=false) {
+  return file.key?localWorkspace.recordFileUrl(file.id,download):file.linkUrl;
+}
+function documentDownloadLink(file,label='Download',style='btn') {
+  return '<a class="'+esc(style)+'" href="'+esc(documentUrl(file,true))+'" download="'+esc(file.name)+'">'+esc(label)+'</a>';
+}
+function externalDocumentLink(url,label) {
+  return '<a class="btn" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">'+esc(label)+'</a>';
+}
 function fileCard(file,tag){
-  const previewable=file.type==='application/pdf'||isImage(file.type);
-  return '<article class="file-card">'+(isImage(file.type)?'<img src="'+esc(localWorkspace.recordFileUrl(file.id))+'" alt="" loading="lazy">':ico('file'))+
+  const type=file.key?documentPreviewType(file):'';
+  return '<article class="file-card">'+(type.startsWith('image/')?'<img src="'+esc(documentUrl(file))+'" alt="" loading="lazy">':ico('file'))+
     '<div>'+pill(tag)+(file.clientVisible?' '+pill('In client preview','good'):'')+'</div><h3>'+esc(file.title)+'</h3><p class="small muted">'+esc(dateLabel(file.date))+'</p>'+
-    '<div class="actions">'+(previewable?button('Preview','preview-file',{id:file.id}):'')+
-    localDownloadLink(file,"Download","btn")+
+    '<div class="actions">'+(type?button('Preview','preview-file',{id:file.id}):'')+
+    (file.key?documentDownloadLink(file):'')+(file.linkUrl?externalDocumentLink(file.linkUrl,'Open link'):'')+
     button('Manage','manage-file',{id:file.id,style:'subtle'})+'</div></article>';
 }
-function isImage(type){return ['image/jpeg','image/png','image/webp','image/gif','image/avif'].includes(type);}
 
 const settingsPanels=['Process','Role defaults','Team & locations','Branding','Task defaults','Standard schedule'];
 function draftSettings(){
@@ -3519,7 +3569,7 @@ function taskDialog(task){
     ...(!task?[field('file','Attachment',null,{type:'file',full:true})]:[])
   ]);
   const attachmentsPanel=task&&p?'<div style="margin-top:12px">'+
-    attachments.map(file=>'<p>'+localDownloadLink(file,file.name)+'</p>').join('')+
+    attachments.map(file=>'<p>'+documentDownloadLink(file,file.name,'')+'</p>').join('')+
     button('Attach file','upload',{section:'Task attachment',task:task.id})+'</div>':'';
   formDialog(task?'Edit task':'Add task',fields+attachmentsPanel+
     (task?'<div style="margin-top:12px">'+button('Remove task','item-delete',{kind:'task',id:task.id,style:'danger'})+'</div>':''),
@@ -3600,18 +3650,44 @@ function uploadDialog(section,task,clientVisible=false) {
 function fileManager(file) {
   const tags=fileTags(file.section);
   const selected=effectiveDocumentTag(file,tags)?.id ?? '';
-  formDialog('Manage file',grid([field('tagId','Tag',selected,{options:fileTagChoices(file.section),full:true}),
+  formDialog('Manage document',grid([field('tagId','Tag',selected,{options:fileTagChoices(file.section),full:true}),
+    ...(file.section==='Task attachment'?[]:[field('linkUrl',file.key?'Document link (optional)':'Document link',file.linkUrl,
+      {type:'url',required:!file.key,full:true,attrib:' maxlength="1400"'})]),
     ...(canShareDocument(file.section)?[field('clientVisible','Show in client preview',file.clientVisible,{type:'checkbox',full:true})]:[])])+
     '<p class="small muted">'+esc(file.name)+'</p>'+button('Remove file','item-delete',{kind:'file',id:file.id,style:'danger'}),'Save file settings',async(input,data)=>{
-      await api('/items/'+file.id,{method:'PUT',body:{...fileTagInput(file.section,input.tagId),version:file.version,kind:'file',clientVisible:data.has('clientVisible')}});
+      await api('/items/'+file.id,{method:'PUT',body:{...fileTagInput(file.section,input.tagId),version:file.version,kind:'file',
+        clientVisible:data.has('clientVisible'),linkUrl:input.linkUrl}});
       await afterChange('File settings saved');
     });
 }
+function addDocumentLink(section) {
+  const project=selectedProject();
+  formDialog('Add document link',grid([
+    field('title','Document title','',{required:true,full:true,attrib:' maxlength="200"'}),
+    field('linkUrl','Document link','',{type:'url',required:true,full:true,attrib:' maxlength="1400"',placeholder:'https://'}),
+    field('tagId','Tag',state.category??'',{options:fileTagChoices(section)}),
+    field('date','Date',today(),{type:'date'})
+  ]),'Save link',async input=>{
+    await api('/files/link',{method:'POST',body:{projectId:project.id,section,title:input.title,linkUrl:input.linkUrl,date:input.date,
+      ...fileTagInput(section,input.tagId)}});
+    await afterChange('Document link added');
+  });
+}
 function filePreview(file) {
-  const url=esc(localWorkspace.recordFileUrl(file.id));
-  const content=isImage(file.type)?'<img class="file-preview-image" src="'+url+'" alt="'+esc(file.title)+'">':
-    '<iframe sandbox class="file-preview" src="'+url+'" title="'+esc(file.title)+'"></iframe>';
-  noFormDialog(file.title,content+'<div class="actions">'+localDownloadLink(file,'Download file','btn')+'</div>');
+  const type=documentPreviewType(file);
+  if (!file.key||!type) return;
+  const url=documentUrl(file);
+  const content=type.startsWith('image/')?'<img class="file-preview-image" src="'+esc(url)+'" alt="'+esc(file.title)+'">':
+    '<iframe class="file-preview" src="'+esc(url)+'" title="'+esc(file.title)+'"></iframe>';
+  noFormDialog(file.title,'<div class="stack document-preview"><div class="actions">'+externalDocumentLink(url,'Open in new tab')+
+    documentDownloadLink(file,'Download file')+'</div>'+content+'</div>');
+  const image=dialog.querySelector('.file-preview-image');
+  image?.addEventListener('error',()=>{
+    const notice=document.createElement('p');
+    notice.className='muted';
+    notice.textContent='The image could not be displayed. You can still download the file.';
+    image.replaceWith(notice);
+  },{once:true});
 }
 function displaySearch(input) {
   const marker=document.querySelector('#find-results');
@@ -3740,6 +3816,7 @@ const handlers={
   'manage-file-tags':({section})=>manageFileTags(section),
   upload:({section,task})=>uploadDialog(section,task),
   'preview-file':({id})=>filePreview(items('file').find(file=>file.id===id)),
+  'add-document-link':({section})=>addDocumentLink(section),
   'manage-file':({id})=>fileManager(items('file').find(file=>file.id===id)),
   'settings-tab':({tab})=>{state.settingsTab=tab;render();},
   'edit-phase':({id})=>phaseDialog(id),
@@ -3836,7 +3913,6 @@ refresh().catch(loadError);
 </script>
 </body>
 </html>
-
 
 
 
