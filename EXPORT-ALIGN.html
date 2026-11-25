@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Export local ALIGN data</title>
+<style>
+body{margin:0;background:#f5f1ea;color:#313131;font:16px/1.5 system-ui}main{margin:12vh auto;padding:24px;max-width:460px;background:#fffdf9;border:1px solid #ded5c8;border-radius:12px}h1{font:400 2rem Georgia,serif;margin:0}button{background:#313131;color:#fff;padding:10px 15px;border:0;border-radius:6px;cursor:pointer;font:inherit}button:disabled{opacity:.6}
+</style></head>
+<body><main><h1>Export local ALIGN data</h1>
+<p>Open this page in the same Chrome profile where you can see Lot 47. The export includes your projects, tasks, settings, and saved files.</p>
+<button id="export" type="button">Export local data</button>
+<p id="status" role="status"></p></main>
+<script>
+async function exportAlignBackup() {
+  const request = indexedDB.open('align-single-file-v1');
+  request.onupgradeneeded = () => request.transaction.abort();
+  const result = operation => new Promise((resolve,reject) => {
+    operation.onsuccess = () => resolve(operation.result);
+    operation.onerror = () => reject(operation.error);
+  });
+  const encode = bytes => {
+    const chunks = [];
+    for (let i=0; i<bytes.length; i+=32768) {
+      chunks.push(String.fromCharCode(...bytes.subarray(i,i+32768)));
+    }
+    return btoa(chunks.join(''));
+  };
+  let database;
+  try {
+    database=await result(request);
+    const transaction=database.transaction(['state','files']);
+    const storedFiles=transaction.objectStore('files');
+    const [snapshot, keys, files]=await Promise.all([
+      result(transaction.objectStore('state').get('workspace')),
+      result(storedFiles.getAllKeys()),result(storedFiles.getAll())
+    ]);
+    if (!snapshot?.bytes?.length) throw new Error('No local data was found at this address. Open the ALIGN copy that shows your projects in the same browser.');
+    const attachments=await Promise.all(files.map(async (file,index)=>({
+      key:keys[index],type:file.type,base64:encode(new Uint8Array(await file.arrayBuffer()))
+    })));
+    const payload={format:'align-local-backup-v1',exportedAt:new Date().toISOString(),sqlite:encode(snapshot.bytes),attachments};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(payload)],{type:'application/json'}));
+    const link=document.createElement('a');
+    link.href=url;
+    link.download='ALIGN-local-backup.json';
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+  } finally {
+    database?.close();
+  }
+}
+
+const button=document.querySelector('#export');
+const status=document.querySelector('#status');
+button.addEventListener('click',async()=>{
+  button.disabled=true;
+  status.textContent='Preparing your backup…';
+  try {
+    await exportAlignBackup();
+    status.textContent='Backup downloaded as ALIGN-local-backup.json.';
+  } catch(error) {
+    status.textContent=error.message;
+  } finally {button.disabled=false;}
+});
+</script></body></html>
