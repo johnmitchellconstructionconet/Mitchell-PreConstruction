@@ -1,3 +1,9 @@
+
+
+
+
+
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -82,6 +88,37 @@ button.brand-logo:hover{border-color:#766c5d;background:#eae6df;color:#292623}
 
 .brand-company{font-size:.68rem;font-weight:650;text-align:center;line-height:1.25;overflow-wrap:anywhere}
 @media(max-width:850px){.side .brand-company{display:none}}
+
+.project-team{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) auto;gap:12px 20px;align-items:center;padding:12px 16px}
+.project-team strong{display:block;margin-top:2px;overflow-wrap:anywhere}
+@media(max-width:525px){.project-team{grid-template-columns:repeat(2,minmax(0,1fr))}.project-team .btn{grid-column:1/-1;justify-self:start}}
+
+.project-task-card{overflow:hidden}
+.project-task-card .panel-head{padding:13px 16px 9px;border:0}
+.project-task-card .panel-head h2{font:720 1.15rem/1.2 var(--font);letter-spacing:-.025em}
+.project-task-card .panel-head .btn{min-height:34px;border:0;border-radius:18px;background:var(--brand-soft);color:var(--brand-goldInk)}
+.project-task-card .panel-head .btn:hover{background:var(--brand-line)}
+.project-task-filters{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 16px 7px;color:var(--muted);font-size:.8rem}
+.project-task-card .status-select{background:transparent;border:1px solid transparent;color:var(--muted);min-height:34px;font-size:.78rem;max-width:100%}
+.project-task-card .status-select:hover,.project-task-card .status-select:focus-visible{border-color:var(--line);background:var(--canvas)}
+.project-task-list{list-style:none;margin:0;padding:0 14px 5px 9px}
+.project-task-item{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:start;column-gap:4px;position:relative;padding:7px 0}
+.project-task-item::before{content:"";position:absolute;inset:0 0 auto 44px;border-top:1px solid var(--line)}
+.project-task-toggle{display:grid;place-items:center;width:40px;height:42px;padding:0;border:0;border-radius:50%;background:none}
+.project-task-toggle>span{display:grid;place-items:center;width:22px;height:22px;border:1.5px solid #9a8870;border-radius:50%;color:transparent}
+.project-task-toggle:hover>span{border-color:var(--brand-goldInk);background:var(--brand-soft);color:var(--brand-goldInk)}
+.project-task-toggle .ico{width:14px;height:14px}
+.project-task-toggle[aria-checked=true]>span{border-color:var(--brand-goldInk);background:var(--brand-goldInk);color:white}
+.project-task-copy{align-self:center;min-width:0;padding:2px 0 3px}
+.project-task-title{border:0;background:none;padding:0;color:var(--ink);font-size:.94rem;font-weight:650;line-height:1.25;text-align:left;overflow-wrap:anywhere}
+.project-task-title:hover{text-decoration:underline;text-underline-offset:3px}
+.project-task-item.is-done .project-task-title{color:var(--muted);text-decoration:line-through}
+.project-task-meta{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px;color:var(--muted);font-size:.76rem;line-height:1.3;overflow-wrap:anywhere}
+.project-task-meta time{color:var(--brand-goldInk);font-weight:650}
+.project-task-meta time.overdue{color:var(--red)}
+.project-task-item .status-select{align-self:center}
+.project-task-empty{margin:0 16px;padding:19px 0 21px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
+@media(max-width:380px){.project-task-item{grid-template-columns:40px minmax(0,1fr)}.project-task-item .status-select{grid-column:2;justify-self:start;margin-left:-6px}}
 
 :root{--brand-canvas:#f5f1ea;--brand-paper:#fffdf9;--brand-ink:#313131;--brand-muted:#655c51;--brand-line:#ded5c8;--brand-primary:#313131;--brand-dark:#252424;--brand-hover:#47413a;--brand-soft:#f1e8da;--brand-accent:#b08d57;--brand-highlight:#e7c894;--brand-goldInk:#78582e;--brand-white:#ffffff}
 .client-page{margin:0;background:var(--brand-canvas);color:var(--brand-ink)}
@@ -485,9 +522,14 @@ function projectSummary(project, asOf = today()) {
   const last = dates[steps.at(-1)?.id];
   return {steps,next,done,current,dates,last,percentage:steps.length ? Math.round(done / steps.length * 100) : 0};
 }
+const projectRoleFields = {Architect:'architect',Designer:'designer'};
+function projectRoleAssignees(settings, project, role) {
+  const assigned = Object.hasOwn(projectRoleFields,role) ? project[projectRoleFields[role]] : '';
+  return assigned ? [assigned] : (settings.roles[role] ?? []);
+}
 function stepAssignees(settings, project, step) {
   const assigned = project.workflow[step.id]?.assigned;
-  return Array.isArray(assigned) ? assigned : (settings.roles[step.role] ?? []);
+  return Array.isArray(assigned) ? assigned : projectRoleAssignees(settings,project,step.role);
 }
 function dateLabel(value) {
   return value ? new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(value+'T12:00:00Z')) : '—';
@@ -540,13 +582,14 @@ function makeProject(input, settings) {
     projectType,owner:cleanText(input.owner) || 'John Mitchell',address:cleanText(input.address),
     phone:cleanText(input.phone, 60),email:cleanText(input.email),referral:cleanText(input.referral),
     start:optionalDate(input.start) || today(),target:'',baseline:null,workflow:{},phases:structuredClone(settings.phases),
+    architect:cleanText(input.architect),designer:cleanText(input.designer),
     govisually:'',markup:15, archived:false
   };
 }
 function applyProjectAction(original, action, input, actor, asOf = today()) {
   const project = structuredClone(original);
   if (action === 'details') {
-    for (const field of ['name','client','location','owner','address','phone','email','referral']) {
+    for (const field of ['name','client','location','owner','address','phone','email','referral','architect','designer']) {
       if (field in input) project[field] = cleanText(input[field]);
     }
     requireValue(project.name, 'Enter a project name.');
@@ -737,10 +780,14 @@ function validatedMeetingTags(entries) {
 }
 
 const documentSections = {
+  bidding:{title:'Bidding Docs',labels:['Bid Requests','Trade Bids','Scopes of Work','Takeoffs','Pricing References','Other']},
   plans:{title:'Plans & Design',labels:['Architectural','Structural','Electrical','Plumbing','Mechanical','Site Plan','Elevations','Other']},
   proposals:{title:'Proposals & Contracts',labels:['Preliminary Proposal','Formal Proposal','Construction Agreement','Other document']},
   files:{title:'Files',labels:['Design Discovery Form','Inspiration Photos','Reading Material','Notes','Other']}
 };
+function canShareDocument(section) {
+  return section!=='Task attachment' && section!==documentSections.bidding.title;
+}
 const reservedDocumentTags = new Set(['all','untagged']);
 function documentSectionKey(section) {
   return Object.keys(documentSections).find(key=>documentSections[key].title===section);
@@ -1344,7 +1391,7 @@ async function upload(request, env, user) {
   const title = cleanText(form.get('title')) || file.name;
   const date = optionalDate(form.get('date')) || today();
   const task = cleanText(form.get('task'));
-  const clientVisible = section!=='Task attachment' && form.get('clientVisible')==='true';
+  const clientVisible = canShareDocument(section) && form.get('clientVisible')==='true';
   if (section === 'Task attachment') {
     const parent = await dbRead(env,recordId(task),'task');
     requireValue(parent?.projectId === projectId && !parent.removed,'Choose a task in this project.');
@@ -1500,7 +1547,7 @@ async function sharedClientPage(request,env,url) {
   if (!share?.token||!sameClientSecret(share.token,token)||!project||project.archived) return clientPageResponse(null,404);
   if (fileRequest) {
     const file=await dbRead(env,fileId,'file');
-    if (!file||file.projectId!==id||file.removed||!file.clientVisible||file.section==='Task attachment') return clientPageResponse(null,404);
+    if (!file||file.projectId!==id||file.removed||!file.clientVisible||!canShareDocument(file.section)) return clientPageResponse(null,404);
     return serveDocument(request,env,url,file,true);
   }
   const logo=await dbRead(env,'company-logo','branding');
@@ -1511,7 +1558,8 @@ async function sharedClientPage(request,env,url) {
     env.DB.prepare("SELECT data FROM records WHERE project_id=? AND kind='update' AND json_extract(data,'$.removed') IS NOT 1 ORDER BY updated_at DESC LIMIT 100").bind(id).all(),
     env.DB.prepare("SELECT * FROM records WHERE project_id=? AND kind='file' AND json_extract(data,'$.removed') IS NOT 1 AND json_extract(data,'$.clientVisible') IS 1 AND json_extract(data,'$.section')!='Task attachment' ORDER BY updated_at DESC").bind(id).all()
   ]);
-  const documents=files.results.map(normalized).map(file=>({title:file.title,name:file.name,url:'/p/'+id+'/'+token+'/files/'+file.id}));
+  const documents=files.results.map(normalized).filter(file=>canShareDocument(file.section))
+    .map(file=>({title:file.title,name:file.name,url:'/p/'+id+'/'+token+'/files/'+file.id}));
   const payload=clientProjection(project,projectSummary(project),settings,rows.results.map(row=>JSON.parse(row.data)),documents);
   const logoUrl=logo?.key?'/p/'+id+'/'+token+'/logo':'';
   return clientPageResponse('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
@@ -1589,7 +1637,9 @@ async function handleApi(request,env,url) {
     const original = await projectFrom(env,id);
     const input = await readBody(request);
     if (action === 'assign' && Array.isArray(input.assigned)) {
-      requireValue(input.assigned.every(name => settings.people.some(person => person.name === name)),'Choose assignees from the company roster.');
+      const projectTeam=Object.values(projectRoleFields).map(key=>original[key]).filter(Boolean);
+      requireValue(input.assigned.every(name => projectTeam.includes(name)||settings.people.some(person => person.name === name)),
+        'Choose assignees from the company roster or project design team.');
     }
     const data = applyProjectAction(fieldsOnly(original),action,input,user.name);
     return json(await writeRecord(env,{id,kind:'project',data,actor:user.name,version:bodyVersion(input.version)}));
@@ -1619,7 +1669,7 @@ async function handleApi(request,env,url) {
       requireValue(!active.total,'Remove the clarification items in this round first.');
     }
     const data = method === 'DELETE' ? {...fieldsOnly(original),removed:true} :
-      input.kind === 'file' ? {...fieldsOnly(original),...('clientVisible' in input?{clientVisible:input.clientVisible===true && original.section!=='Task attachment'}:{}), ...(input.tagId!==undefined || input.category!==undefined?await fileTagFields(env,original.section,input.tagId,input.category):{})} :
+      input.kind === 'file' ? {...fieldsOnly(original),...('clientVisible' in input?{clientVisible:input.clientVisible===true && canShareDocument(original.section)}:{}), ...(input.tagId!==undefined || input.category!==undefined?await fileTagFields(env,original.section,input.tagId,input.category):{})} :
       normalRecord(input.kind,input,original,settings);
     if (original.kind === 'clarification') data.roundId = original.roundId;
     return json(await writeRecord(env,{id,kind:original.kind,projectId:original.projectId,data,actor:user.name,version:bodyVersion(input.version)}));
@@ -1948,9 +1998,14 @@ function projectSummary(project, asOf = today()) {
   const last = dates[steps.at(-1)?.id];
   return {steps,next,done,current,dates,last,percentage:steps.length ? Math.round(done / steps.length * 100) : 0};
 }
+const projectRoleFields = {Architect:'architect',Designer:'designer'};
+function projectRoleAssignees(settings, project, role) {
+  const assigned = Object.hasOwn(projectRoleFields,role) ? project[projectRoleFields[role]] : '';
+  return assigned ? [assigned] : (settings.roles[role] ?? []);
+}
 function stepAssignees(settings, project, step) {
   const assigned = project.workflow[step.id]?.assigned;
-  return Array.isArray(assigned) ? assigned : (settings.roles[step.role] ?? []);
+  return Array.isArray(assigned) ? assigned : projectRoleAssignees(settings,project,step.role);
 }
 function dateLabel(value) {
   return value ? new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(value+'T12:00:00Z')) : '—';
@@ -2003,13 +2058,14 @@ function makeProject(input, settings) {
     projectType,owner:cleanText(input.owner) || 'John Mitchell',address:cleanText(input.address),
     phone:cleanText(input.phone, 60),email:cleanText(input.email),referral:cleanText(input.referral),
     start:optionalDate(input.start) || today(),target:'',baseline:null,workflow:{},phases:structuredClone(settings.phases),
+    architect:cleanText(input.architect),designer:cleanText(input.designer),
     govisually:'',markup:15, archived:false
   };
 }
 function applyProjectAction(original, action, input, actor, asOf = today()) {
   const project = structuredClone(original);
   if (action === 'details') {
-    for (const field of ['name','client','location','owner','address','phone','email','referral']) {
+    for (const field of ['name','client','location','owner','address','phone','email','referral','architect','designer']) {
       if (field in input) project[field] = cleanText(input[field]);
     }
     requireValue(project.name, 'Enter a project name.');
@@ -2200,10 +2256,14 @@ function validatedMeetingTags(entries) {
 }
 
 const documentSections = {
+  bidding:{title:'Bidding Docs',labels:['Bid Requests','Trade Bids','Scopes of Work','Takeoffs','Pricing References','Other']},
   plans:{title:'Plans & Design',labels:['Architectural','Structural','Electrical','Plumbing','Mechanical','Site Plan','Elevations','Other']},
   proposals:{title:'Proposals & Contracts',labels:['Preliminary Proposal','Formal Proposal','Construction Agreement','Other document']},
   files:{title:'Files',labels:['Design Discovery Form','Inspiration Photos','Reading Material','Notes','Other']}
 };
+function canShareDocument(section) {
+  return section!=='Task attachment' && section!==documentSections.bidding.title;
+}
 const reservedDocumentTags = new Set(['all','untagged']);
 function documentSectionKey(section) {
   return Object.keys(documentSections).find(key=>documentSections[key].title===section);
@@ -2297,7 +2357,7 @@ const app = document.querySelector('#app');
 const dialog = document.querySelector('#dialog');
 const toast = document.querySelector('#toast');
 const state = {workspace:null,current:null,settingsTab:'Process',draft:null,filter:'all',phase:'',projectQuery:'',taskFilter:'Open',taskPerson:'',taskContext:'All projects',round:'default',category:null,notesQuery:'',busy:false};
-const tabs = ['Overview','Clarifications','Google Sheet','Plans & Design','Proposals & Contracts','Files','Meeting Notes','Client View'];
+const tabs = ['Overview','Clarifications','Bidding Docs','Plans & Design','Proposals & Contracts','Files','Meeting Notes','Client View'];
 const svgPaths = {
   layout:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
   tasks:'<rect x="5" y="4" width="14" height="16" rx="2"/><path d="m8 11 2 2 4-4m-6 7h8"/>',
@@ -2386,7 +2446,8 @@ async function api(path, {method='GET',body}={}) {
 }
 function route() {
   const [name,id,tab] = location.hash.slice(1).split('/');
-  if (name==='project' && id) return {name,id,tab:tabs.find(value=>slug(value)===(tab==='estimate'?'google-sheet':tab)) || 'Overview'};
+  const section=['estimate','google-sheet'].includes(tab)?'bidding-docs':tab;
+  if (name==='project' && id) return {name,id,tab:tabs.find(value=>slug(value)===section) || 'Overview'};
   return {name:['tasks','settings'].includes(name)?name:'projects'};
 }
 function slug(title){return title.toLowerCase().replace(/[^a-z0-9]+/g,'-');}
@@ -2585,7 +2646,7 @@ function projectView(tab) {
   const header=heading(p.name,[p.client,p.location,p.projectType,'Owner · '+p.owner].filter(Boolean).join('  /  '),
     button('All projects','navigate',{target:'projects'})+button('Project details','project-details')+(tab!=='Client View'?button('Client view','project-tab',{tab:'Client View',style:'primary'}):''),'Preconstruction project');
   const tabstrip='<nav class="tabs" aria-label="Project sections">'+tabs.map(title=>'<button type="button"'+actionAttrs('project-tab',{tab:title})+(tab===title?' class="active" aria-current="page"':'')+'>'+esc(title)+'</button>').join('')+'</nav>';
-  const views={'Overview':()=>projectOverview(p,summary),'Clarifications':clarifications,'Google Sheet':()=>googleSheetView(p),
+  const views={'Overview':()=>projectOverview(p,summary),'Clarifications':clarifications,'Bidding Docs':()=>fileView(tab),
     'Plans & Design':()=>fileView(tab),'Proposals & Contracts':()=>fileView(tab),'Files':()=>fileView(tab),
     'Meeting Notes':meetingView,'Client View':()=>clientView(p,summary)};
   return header+tabstrip+views[tab]();
@@ -2600,17 +2661,39 @@ function projectOverview(project,summary){
   }).join('')+pill('Ready for Construction',summary.next?'':'active');
   const tasks=items('task');
   return '<div class="stack"><div class="schedule-meta">'+meta.map(([label,val])=>'<div class="panel mini"><div class="eyebrow">'+label+'</div><strong>'+esc(val)+'</strong></div>').join('')+'</div>'+
-    '<div class="rail" aria-label="Project phases">'+rail+'</div>'+
+    projectTeam(project)+'<div class="rail" aria-label="Project phases">'+rail+'</div>'+
     '<div class="dashboard-grid split">'+nextAction(project,summary)+
-    panel('Project tasks',taskPeek(tasks),button('Add task','new-task',{style:'primary',icon:'plus'}))+'</div>'+
+    panel('Project tasks',taskPeek(tasks),button('Add task','new-task',{icon:'plus'}),'project-task-card')+'</div>'+
     scheduleView(project,summary)+clientUpdates()+'</div>';
+}
+function projectTeam(project) {
+  const roles=Object.keys(projectRoleFields).map(role=>{
+    const assigned=projectRoleAssignees(state.workspace.settings,project,role);
+    return '<div><div class="eyebrow">'+esc(role)+'</div><strong>'+esc(assigned.join(', ')||'Unassigned')+'</strong></div>';
+  }).join('');
+  return '<section class="panel project-team" aria-label="Project design team">'+roles+
+    button('Assign design team','edit-design-team')+'</section>';
 }
 function taskPeek(tasks) {
   const visible=filteredTasks(tasks,state.taskFilter);
-  const filters='<div class="row"><span class="small muted">'+visible.length+' in view</span>'+selectControl('task-filter','Filter project tasks',['Open','Overdue','All',...taskStatuses],state.taskFilter)+'</div>';
-  if (!visible.length) return filters+empty('No tasks in this view','Add a project task or change the status filter.','','tasks');
-  return filters+visible.map(task=>'<div class="row"><div><button type="button" class="link-button"'+actionAttrs('edit-task',{id:task.id})+'>'+esc(task.title)+'</button><p>'+esc([task.assignee||'Unassigned',task.due?dateLabel(task.due):''].filter(Boolean).join(' · '))+'</p></div>'+
-    selectControl('task-status','Status for '+task.title,taskStatuses,task.status,{id:task.id})+'</div>').join('');
+  const filters='<div class="project-task-filters"><span>'+visible.length+' '+(visible.length===1?'task':'tasks')+'</span>'+
+    selectControl('task-filter','Filter project tasks',['Open','Overdue','All',...taskStatuses],state.taskFilter)+'</div>';
+  if (!visible.length) {
+    const message=!tasks.length?'No tasks yet':state.taskFilter==='Open'?'All tasks complete':'No tasks in this view';
+    return filters+'<p class="project-task-empty">'+message+'</p>';
+  }
+  const currentDate=today(), tomorrow=dayShift(currentDate,1);
+  return filters+'<ul class="project-task-list" aria-label="Project tasks" role="list">'+visible.map(task=>{
+    const done=task.status==='Done';
+    const due=task.due===currentDate?'Today':task.due===tomorrow?'Tomorrow':dateLabel(task.due);
+    const overdue=!done&&task.due&&task.due<currentDate;
+    const toggle='<button class="project-task-toggle" type="button" role="checkbox" aria-checked="'+done+'" aria-label="'+
+      esc(task.title)+'" title="'+(done?'Reopen task':'Complete task')+'"'+actionAttrs('toggle-task',{id:task.id})+'><span>'+ico('check')+'</span></button>';
+    return '<li class="project-task-item'+(done?' is-done':'')+'">'+toggle+'<div class="project-task-copy"><button type="button" class="project-task-title"'+
+      actionAttrs('edit-task',{id:task.id})+'>'+esc(task.title)+'</button><div class="project-task-meta"><span>'+esc(task.assignee||'Unassigned')+'</span>'+
+      (task.due?'<time datetime="'+esc(task.due)+'"'+(overdue?' class="overdue"':'')+'>'+(overdue?'Overdue · ':'')+esc(due)+'</time>':'')+'</div></div>'+
+      selectControl('task-status','Status for '+task.title,taskStatuses,task.status,{id:task.id})+'</li>';
+  }).join('')+'</ul>';
 }
 function nextAction(project,summary){
   const step=summary.next;
@@ -2626,7 +2709,7 @@ function nextAction(project,summary){
   const notes=(flow.notes ?? []);
   return '<section class="panel hero'+(waiting?' waiting':'')+'"><div class="panel-body"><div class="actions" style="margin-top:0;justify-content:space-between"><div class="eyebrow">Next required action · Phase '+step.phaseNumber+'</div>'+pill(...status)+'</div>'+
     '<h2>'+esc(step.title)+'</h2><p class="muted">'+esc(step.phaseName)+' · Step '+(summary.current.steps.findIndex(item=>item.id===step.id)+1)+' of '+summary.current.steps.length+'</p>'+
-    '<div class="row" style="padding-inline:0"><div><div class="eyebrow">Assigned to</div><b>'+esc(assigned.join(', ')||'Unassigned')+'</b><p>'+esc(step.role)+(Array.isArray(flow.assigned)?' · Project override':' · Company default')+'</p></div>'+button('Edit assignment','assign-step',{id:step.id})+'</div>'+
+    '<div class="row" style="padding-inline:0"><div><div class="eyebrow">Assigned to</div><b>'+esc(assigned.join(', ')||'Unassigned')+'</b><p>'+esc(step.role)+(Array.isArray(flow.assigned)?' · Step override':Object.hasOwn(projectRoleFields,step.role)&&project[projectRoleFields[step.role]]?' · Project design team':' · Company default')+'</p></div>'+button('Edit assignment','assign-step',{id:step.id})+'</div>'+
     '<div class="row" style="padding-inline:0"><div><div class="eyebrow">Step due</div><b>'+esc(dateLabel(due?.planned))+'</b> <span class="small muted"> · Baseline '+esc(dateLabel(due?.baseline?.due))+'</span></div>'+button('Edit due date','due-step',{id:step.id})+'</div>'+
     (step.meeting.length?'<p class="inset">'+ico('calendar')+' <strong>Meeting needed</strong> · '+esc(step.meeting.join(', '))+'</p>':'')+
     (waiting?'<p class="inset warn"><strong>Waiting on '+esc(waiting.party)+'</strong> · Expected '+esc(dateLabel(waiting.date))+'</p>':'')+
@@ -2680,7 +2763,7 @@ function clientView(project,summary) {
   const share=panel('Client preview',pad('<p class="client-share-description">This copy stores projects in this browser. Use the live ALIGN workspace to create shareable client links.</p>'+
     '<div class="client-share-actions">'+button('Add client update','item-new',{kind:'update'})+button('Add preview file','client-file-upload')+button('Print client view','print-client')+'</div>'),'','client-sharing');
   const logoUrl=state.workspace.branding?.hasLogo?localWorkspace.recordFileUrl('company-logo'):'';
-  const documents=items('file').filter(file=>file.clientVisible&&file.section!=='Task attachment')
+  const documents=items('file').filter(file=>file.clientVisible&&canShareDocument(file.section))
     .map(file=>({title:file.title,name:file.name,url:localWorkspace.recordFileUrl(file.id)}));
   return '<div class="stack">'+share+renderClientPortal(clientProjection(project,summary,state.workspace.settings,items('update'),documents),{logoUrl})+'</div>';
 }
@@ -2705,6 +2788,7 @@ function googleSheetView(project) {
     button(link?'Edit link':'Add link','google-sheet-link',{style:link?'':'primary'}));
 }
 function fileView(section) {
+  const bidding=section===documentSections.bidding.title;
   const list=items('file').filter(file=>file.section===section);
   const tags=fileTags(section);
   const filters=[{id:null,label:'All'},...tags.filter(tag=>tag.label)];
@@ -2713,8 +2797,8 @@ function fileView(section) {
   const shown=list.filter(file=>active===null || (effectiveDocumentTag(file,tags)?.id ?? '')===active);
   const open=selectedProject().govisually;
   const link=section==='Plans & Design'?panel('GoVisually',pad(open?'<a href="'+esc(open)+'" target="_blank" rel="noopener noreferrer">Open GoVisually project</a>':'<p class="muted">Add a GoVisually link to open your project’s plan markups.</p>'),button('Edit link','govisually')):'';
-  const folder='<div class="stack">'+link+'<div class="filters">'+filters.map(tag=>button(tag.label,'category-filter',{...(tag.id===null?{}:{tag:tag.id}),style:active===tag.id?'primary':''})).join('')+(state.workspace.user.admin?button('Manage tags','manage-file-tags',{section,icon:'settings'}):'')+'</div>'+
-    panel(section==='Plans & Design'?'Finalized plans & drawings':section,shown.length?pad('<div class="card-grid">'+shown.map(file=>fileCard(file,effectiveDocumentTag(file,tags)?.label || 'Untagged')).join('')+'</div>'):
+  const folder='<div class="stack">'+(bidding?googleSheetView(selectedProject()):link)+'<div class="filters">'+filters.map(tag=>button(tag.label,'category-filter',{...(tag.id===null?{}:{tag:tag.id}),style:active===tag.id?'primary':''})).join('')+(state.workspace.user.admin?button('Manage tags','manage-file-tags',{section,icon:'settings'}):'')+'</div>'+
+    panel(section==='Plans & Design'?'Finalized plans & drawings':bidding?'Bidding files':section,shown.length?pad('<div class="card-grid">'+shown.map(file=>fileCard(file,effectiveDocumentTag(file,tags)?.label || 'Untagged')).join('')+'</div>'):
       empty('No files in this view','Upload a file or choose a different category.','','file'),button('Upload files','upload',{section,style:'primary',icon:'plus'}))+'</div>';
   return folder;
 }
@@ -3369,22 +3453,32 @@ function projectDetails(){
   formDialog('Project details',grid(projectFields(project))+'<div class="actions" style="margin-top:15px">'+
     button('Archive project','archive-project',{style:'danger'})+'</div>','Save details',input=>projectAction('details',input,'Project details saved'));
 }
+function editDesignTeam() {
+  const project=selectedProject();
+  const settings=state.workspace.settings;
+  const options='<datalist id="design-team-roster">'+roster().map(name=>'<option value="'+esc(name)+'"></option>').join('')+'</datalist>';
+  const fields=Object.entries(projectRoleFields).map(([role,key])=>field(key,role,project[key],{
+    attrib:' list="design-team-roster" maxlength="200"',placeholder:(settings.roles[role]??[]).join(', ')||'Unassigned'
+  }));
+  formDialog('Assign design team','<p class="muted">Choose someone from the roster or type a name. Leave a field blank to use its company default.</p>'+
+    grid(fields)+options,'Save design team',input=>projectAction('details',input,'Design team saved'));
+}
 function stepById(id){return currentSummary().steps.find(step=>step.id===id);}
 function stepAction(action,input,message){return projectAction(action,{stepId:currentSummary().next?.id,...input},message);}
 function assignment(id) {
   const step=stepById(id), p=selectedProject();
   const flow=p.workflow[id] ?? {};
   const assigned=stepAssignees(state.workspace.settings,p,step);
-  const names=[...new Set([...roster(),...assigned])];
-  const defaults=state.workspace.settings.roles[step.role] ?? [];
+  const defaults=projectRoleAssignees(state.workspace.settings,p,step.role);
+  const names=[...new Set([...roster(),...defaults,...assigned])];
   const body='<p class="muted">'+esc(step.title)+'</p>'+
     '<div class="stack" style="margin-top:10px">'+
-    field('mode','Assignment source',Array.isArray(flow.assigned)?'override':'company',{options:[['company','Company default · '+(defaults.join(', ')||'Unassigned')],['override','Project-specific assignment']]})+
+    field('mode','Assignment source',Array.isArray(flow.assigned)?'override':'default',{options:[['default','Role default · '+(defaults.join(', ')||'Unassigned')],['override','Assign this step only']]})+
     checklist('assigned',assigned,names)+'</div>';
-  formDialog('Assign step',body,'Save assignment',(input,data)=>projectAction('assign',{stepId:id,assigned:input.mode==='company'?null:data.getAll('assigned')},'Step assignment saved'));
+  formDialog('Assign step',body,'Save assignment',(input,data)=>projectAction('assign',{stepId:id,assigned:input.mode==='default'?null:data.getAll('assigned')},'Step assignment saved'));
   const mode=dialog.querySelector('[name=mode]');
   const people=[...dialog.querySelectorAll('[name=assigned]')];
-  const update=()=>people.forEach(box=>{box.disabled=mode.value==='company';});
+  const update=()=>people.forEach(box=>{box.disabled=mode.value==='default';});
   mode.addEventListener('change',update);
   update();
 }
@@ -3402,6 +3496,10 @@ function baselineDialog(reset=false){
     reset?'Replace baseline':'Set baseline',input=>projectAction('baseline',input,'Baseline schedule saved'));
 }
 function taskById(id){return items('task').find(task=>task.id===id)||state.workspace.tasks.find(task=>task.id===id);}
+async function saveTaskStatus(task,status,message='Task status updated') {
+  await api('/items/'+task.id,{method:'PUT',body:{kind:'task',version:task.version,status}});
+  await afterChange(message);
+}
 function taskDialog(task){
   const p=route().name==='project'?selectedProject():null;
   const existingProject=task?projects().find(candidate=>candidate.id===task.projectId):null;
@@ -3502,7 +3600,8 @@ function uploadDialog(section,task,clientVisible=false) {
 function fileManager(file) {
   const tags=fileTags(file.section);
   const selected=effectiveDocumentTag(file,tags)?.id ?? '';
-  formDialog('Manage file',grid([field('tagId','Tag',selected,{options:fileTagChoices(file.section),full:true}),field('clientVisible','Show in client preview',file.clientVisible,{type:'checkbox',full:true})])+
+  formDialog('Manage file',grid([field('tagId','Tag',selected,{options:fileTagChoices(file.section),full:true}),
+    ...(canShareDocument(file.section)?[field('clientVisible','Show in client preview',file.clientVisible,{type:'checkbox',full:true})]:[])])+
     '<p class="small muted">'+esc(file.name)+'</p>'+button('Remove file','item-delete',{kind:'file',id:file.id,style:'danger'}),'Save file settings',async(input,data)=>{
       await api('/items/'+file.id,{method:'PUT',body:{...fileTagInput(file.section,input.tagId),version:file.version,kind:'file',clientVisible:data.has('clientVisible')}});
       await afterChange('File settings saved');
@@ -3576,6 +3675,7 @@ const handlers={
   'clear-filter':()=>{state.filter='all';state.phase='';state.projectQuery='';render();},
   'new-project':newProject,
   'project-details':projectDetails,
+  'edit-design-team':editDesignTeam,
   'archive-project':()=>confirmDialog('Archive project','Archive this project and remove it from active views? The project records and files are kept.','Archive',async()=>{
     const p=selectedProject();await api('/projects/'+p.id+'/details',{method:'POST',body:{version:p.version,archived:true}});go('projects');displayToast('Project archived');
   }),
@@ -3598,6 +3698,11 @@ const handlers={
   'remove-note':({id})=>confirmDialog('Remove step note','Remove this note from the step?','Remove',()=>stepAction('delete-note',{noteId:id},'Step note removed')),
   'new-task':()=>taskDialog(),
   'edit-task':({id})=>taskDialog(taskById(id)),
+  'toggle-task':({id})=>{
+    const task=taskById(id);
+    if (!task) return;
+    return task.status==='Done'?saveTaskStatus(task,'Not Started','Task reopened'):saveTaskStatus(task,'Done','Task completed');
+  },
   'item-new':({kind,round})=>itemEditor(kind,null,round?{roundId:round}:{}),
   'item-edit':({kind,id})=>itemEditor(kind,items(kind).find(item=>item.id===id)),
   'item-delete':({kind,id})=>deleteItem(kind==='task'?taskById(id):items(kind).find(item=>item.id===id)),
@@ -3698,10 +3803,10 @@ document.addEventListener('change',async event=>{
   if(type in handlers){state[handlers[type]]=el.value;render();return;}
   if(type==='task-status'){
     const task=taskById(el.dataset.id);
+    if(!task)return;
     el.disabled=true;
     try {
-      await api('/items/'+task.id,{method:'PUT',body:{kind:'task',version:task.version,status:el.value}});
-      await afterChange('Task status updated');
+      await saveTaskStatus(task,el.value);
     } catch(error) {displayToast(error.message,true);await refresh().catch(loadError);}
     finally {el.disabled=false;}
   }
@@ -3731,3 +3836,7 @@ refresh().catch(loadError);
 </script>
 </body>
 </html>
+
+
+
+
