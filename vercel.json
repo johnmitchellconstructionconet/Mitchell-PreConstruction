@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {"source": "/", "destination": "https://mitchell-align.mitchell-con-2326.chatgpt.site/?team=1", "permanent": false},
+    {"source": "/index.html", "destination": "https://mitchell-align.mitchell-con-2326.chatgpt.site/?team=1", "permanent": false},
+    {"source": "/ALIGN.html", "destination": "https://mitchell-align.mitchell-con-2326.chatgpt.site/?team=1", "permanent": false}
+  ]
+}
